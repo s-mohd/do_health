@@ -1,0 +1,110 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-10-09 21:05:35.486087",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "patient_encounter_tab",
+  "side_tabs_section",
+  "show_vital_signs",
+  "vital_signs_tab_layout",
+  "vital_signs_editor",
+  "show_patient_history",
+  "patient_history_tab_layout",
+  "patient_history_editor",
+  "column_break_ttba",
+  "show_dental_charts",
+  "tab_2_tab"
+ ],
+ "fields": [
+  {
+   "depends_on": "eval:doc.show_vital_signs",
+   "fieldname": "vital_signs_tab_layout",
+   "fieldtype": "Table",
+   "label": "Vital Signs Tab Layout",
+   "options": "Tab Layout"
+  },
+  {
+   "fieldname": "patient_encounter_tab",
+   "fieldtype": "Tab Break",
+   "label": "Patient Encounter"
+  },
+  {
+   "fieldname": "side_tabs_section",
+   "fieldtype": "Section Break",
+   "label": "Side Tabs"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_vital_signs",
+   "fieldtype": "Check",
+   "label": "Show Vital Signs"
+  },
+  {
+   "fieldname": "tab_2_tab",
+   "fieldtype": "Tab Break",
+   "label": "Tab 2"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_patient_history",
+   "fieldtype": "Check",
+   "label": "Show Patient History"
+  },
+  {
+   "depends_on": "eval:doc.show_patient_history",
+   "fieldname": "patient_history_tab_layout",
+   "fieldtype": "Table",
+   "label": "Patient History Tab Layout",
+   "options": "Tab Layout"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_dental_charts",
+   "fieldtype": "Check",
+   "label": "Show Dental Charts"
+  },
+  {
+   "fieldname": "column_break_ttba",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "vital_signs_editor",
+   "fieldtype": "Code",
+   "label": "Vital Signs Editor",
+   "options": "JS"
+  },
+  {
+   "fieldname": "patient_history_editor",
+   "fieldtype": "Code",
+   "label": "Patient History Editor",
+   "options": "JS"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-10-10 11:21:22.198014",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Do Health Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
