@@ -25,8 +25,26 @@ app_license = "mit"
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/do_health/css/do_health.css"
-# app_include_js = "/assets/do_health/js/do_health.js"
+app_include_css = [
+    "/assets/do_health/css/jquery-ui.min.css",
+    "/assets/do_health/css/bootstrap-popover-x.min.css",
+    "/assets/frappe/node_modules/air-datepicker/dist/css/datepicker.min.css",
+    "/assets/do_health/css/patient_encounter.css",
+]
+app_include_js = [
+	"/assets/do_health/js/calendar.js",
+	"/assets/do_health/js/lib/imagemapster/jquery.imagemapster.min.js",
+	"/assets/do_health/js/lib/p5/p5.min.js",
+	"/assets/do_health/js/humanize-duration.js",
+	"/assets/do_health/js/jquery-ui.min.js",
+	"/assets/do_health/js/bootstrap-popover-x.min.js",
+	"/assets/do_health/js/humanize-duration.js",
+	"/assets/do_health/js/customscript.js",
+	"/assets/frappe/node_modules/air-datepicker/dist/js/datepicker.min.js",
+	"/assets/frappe/node_modules/air-datepicker/dist/js/i18n/datepicker.en.js",
+	# "/assets/do_health/js/lib/fullcalendar/fullcalendar.min.js"
+	# "/assets/do_health/js/patient_appointment.js"
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/do_health/css/do_health.css"
@@ -40,13 +58,27 @@ app_license = "mit"
 # webform_include_css = {"doctype": "public/css/doctype.css"}
 
 # include js in page
-# page_js = {"page" : "public/js/file.js"}
+page_js = {"appointment-calendar" : "/assets/frappe/node_modules/air-datepicker/dist/js/datepicker.min.js"}
+page_js = {"appointment-calendar" : "/assets/frappe/node_modules/air-datepicker/dist/js/i18n/datepicker.en.js"}
+page_js = {"appointment-calendar" : "/assets/frappe/js/frappe/views/calendar/calendar.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_js = {
+	# "Patient" : "public/js/patient.js",
+	"Patient Appointment" : "public/js/patient_appointment.js",
+	"Patient Encounter" : "public/js/patient_encounter.js",
+ 	# "Clinical Procedure" : "public/js/clinical_procedure.js"
+}
+doctype_list_js = {
+	"Patient Appointment" : "public/js/patient_appointment_list.js"
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
-# doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
+doctype_calendar_js = {
+	"Patient Appointment" : [
+		"public/js/patient_appointment_calendar.js",
+		"/assets/do_health/js/humanize-duration.js"
+	]
+}
 
 # Svg Icons
 # ------------------
@@ -129,21 +161,45 @@ app_license = "mit"
 # ---------------
 # Override standard doctype classes
 
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
+override_doctype_class = {
+    "Patient Appointment": "do_health.overrides.patient_appointment.CustomPatientAppointment",
+    "Test Patient Appointment": "do_health.overrides.test_patient_appointment.CustomTestPatientAppointment",
+    "Patient Encounter": "do_health.overrides.patient_encounter.CustomPatientEncounter"
+}
 
 # Document Events
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+#       "*": {
+#               "on_update": "method",
+#               "on_cancel": "method",
+#               "on_trash": "method"
+#       }
+    'Patient':{
+        "on_update": "do_health.api.events.patient_update"
+    },
+    'Patient Appointment':{
+        "after_insert": "do_health.api.events.patient_appointment_inserted",
+        "on_update": "do_health.api.methods.get_appointments"
+    },
+    'Patient Encounter':{
+        "after_insert": "do_health.api.events.patient_encounter_inserted",
+        "on_update": "do_health.api.events.patient_encounter_update",
+        "on_submit": "do_health.api.events.patient_encounter_submit"
+    },
+    'Clinical Procedure':{
+        "on_update": "do_health.api.events.clinical_procedure_update",
+    },
+    'Service Request':{
+        "on_update": "do_health.api.methods.get_services"
+    },
+    'Medication Request':{
+        "on_update": "do_health.api.events.medication_request_update",
+        "on_submit": "do_health.api.events.medication_request_update"
+    },
+}
 
 # Scheduled Tasks
 # ---------------
@@ -165,6 +221,12 @@ app_license = "mit"
 # 		"do_health.tasks.monthly"
 # 	],
 # }
+
+scheduler_events = {
+    "all": [
+        "do_health.api.methods.mark_no_show_appointments"
+    ],
+}
 
 # Testing
 # -------
@@ -242,3 +304,7 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
+fixtures = [
+    {"dt": "Custom Field", "filters": {"module": "Do Health"}},
+	{"dt": "Property Setter", "filters": {"module": "Do Health"}},
+]

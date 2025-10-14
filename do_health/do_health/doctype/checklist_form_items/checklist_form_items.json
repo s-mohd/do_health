@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-10-10 12:18:49.931997",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "label",
+  "for",
+  "type",
+  "options",
+  "value"
+ ],
+ "fields": [
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "fieldname": "for",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "For",
+   "options": "\nNurse\nPractitioner"
+  },
+  {
+   "fieldname": "type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Select\nText\nCheck\nDivider\nSection\nHeader"
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Options"
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Value"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-10-14 11:24:44.258144",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Checklist Form Items",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

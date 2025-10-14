@@ -1,0 +1,116 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-09-16 09:10:52.624104",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item",
+  "item_name",
+  "item_uom",
+  "quantity",
+  "rate",
+  "discount_percentage",
+  "discount_amount",
+  "amount",
+  "customer_amount",
+  "insurance_amount",
+  "customer_invoice",
+  "insurance_invoice"
+ ],
+ "fields": [
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item"
+  },
+  {
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name"
+  },
+  {
+   "fetch_from": "item.weight_uom",
+   "fetch_if_empty": 1,
+   "fieldname": "item_uom",
+   "fieldtype": "Data",
+   "label": "Item UOM"
+  },
+  {
+   "default": "1",
+   "fieldname": "quantity",
+   "fieldtype": "Float",
+   "label": "Quantity"
+  },
+  {
+   "fetch_from": "item.valuation_rate",
+   "fetch_if_empty": 1,
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Rate"
+  },
+  {
+   "fieldname": "discount_percentage",
+   "fieldtype": "Float",
+   "label": "Discount Percentage"
+  },
+  {
+   "fieldname": "discount_amount",
+   "fieldtype": "Currency",
+   "label": "Discount Amount",
+   "options": "currency"
+  },
+  {
+   "default": "0",
+   "fieldname": "amount",
+   "fieldtype": "Float",
+   "label": "Amount",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "customer_amount",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Customer Amount"
+  },
+  {
+   "default": "0",
+   "fieldname": "insurance_amount",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Insurance Amount"
+  },
+  {
+   "fieldname": "customer_invoice",
+   "fieldtype": "Link",
+   "label": "Customer Invoice",
+   "options": "Sales Invoice"
+  },
+  {
+   "fieldname": "insurance_invoice",
+   "fieldtype": "Link",
+   "label": "Insurance Invoice",
+   "options": "Sales Invoice"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-10-14 11:24:42.869971",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Healthcare Invoice Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

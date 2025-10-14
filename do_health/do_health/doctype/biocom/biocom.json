@@ -1,0 +1,140 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-11-08 23:04:19.354744",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "date",
+  "appointment",
+  "column_break_iqiv",
+  "pressure",
+  "patient",
+  "before_section",
+  "before_upper_left",
+  "before_lower_left",
+  "column_break_gpqv",
+  "before_upper_right",
+  "before_lower_right",
+  "after_section",
+  "after_upper_left",
+  "after_lower_left",
+  "column_break_grma",
+  "after_upper_right",
+  "after_lower_right"
+ ],
+ "fields": [
+  {
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "label": "Date"
+  },
+  {
+   "fieldname": "appointment",
+   "fieldtype": "Link",
+   "label": "Appointment",
+   "options": "Patient Appointment"
+  },
+  {
+   "fieldname": "column_break_iqiv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pressure",
+   "fieldtype": "Data",
+   "label": "Pressure"
+  },
+  {
+   "fetch_from": "appointment.patient",
+   "fetch_if_empty": 1,
+   "fieldname": "patient",
+   "fieldtype": "Link",
+   "label": "Patient",
+   "options": "Patient"
+  },
+  {
+   "fieldname": "before_section",
+   "fieldtype": "Section Break",
+   "label": "Before"
+  },
+  {
+   "fieldname": "before_upper_left",
+   "fieldtype": "Data",
+   "label": "Upper Left"
+  },
+  {
+   "fieldname": "before_lower_left",
+   "fieldtype": "Data",
+   "label": "Lower Left"
+  },
+  {
+   "fieldname": "column_break_gpqv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "before_upper_right",
+   "fieldtype": "Data",
+   "label": "Upper Right"
+  },
+  {
+   "fieldname": "before_lower_right",
+   "fieldtype": "Data",
+   "label": "Lower Right"
+  },
+  {
+   "fieldname": "after_section",
+   "fieldtype": "Section Break",
+   "label": "After"
+  },
+  {
+   "fieldname": "after_upper_left",
+   "fieldtype": "Data",
+   "label": "Upper Left"
+  },
+  {
+   "fieldname": "after_lower_left",
+   "fieldtype": "Data",
+   "label": "Lower Left"
+  },
+  {
+   "fieldname": "column_break_grma",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "after_upper_right",
+   "fieldtype": "Data",
+   "label": "Upper Right"
+  },
+  {
+   "fieldname": "after_lower_right",
+   "fieldtype": "Data",
+   "label": "Lower Right"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-10-14 11:24:43.482240",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Biocom",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

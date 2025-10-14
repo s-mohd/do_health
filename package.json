@@ -1,0 +1,11 @@
+{
+    "name": "do_health",
+    "description": "an extention for the frappe healthcare app",
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "@fullcalendar/resource-timegrid": "^6.1.19",
+        "@fullcalendar/resource-timeline": "^6.1.19",
+        "fullcalendar": "^6.1.19"
+    }
+}

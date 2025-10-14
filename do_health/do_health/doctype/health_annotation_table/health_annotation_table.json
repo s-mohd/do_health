@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-08-11 13:41:04.646855",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_v4wd",
+  "annotation",
+  "type",
+  "image",
+  "json"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_v4wd",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "annotation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Annotation",
+   "options": "Health Annotation"
+  },
+  {
+   "fieldname": "type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Investigation\nTreatment"
+  },
+  {
+   "fetch_from": "annotation.image",
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "hidden": 1,
+   "label": "Image"
+  },
+  {
+   "fetch_from": "annotation.json",
+   "fieldname": "json",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Json"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-10-14 11:24:43.823071",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Health Annotation Table",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,46 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:duration",
+ "creation": "2024-10-15 13:05:37.223868",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "duration"
+ ],
+ "fields": [
+  {
+   "fieldname": "duration",
+   "fieldtype": "Data",
+   "label": "Duration",
+   "unique": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-10-14 11:24:44.145724",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Symptom Duration",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,130 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-11-19 04:56:40.914860",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "plan_template",
+  "procedures",
+  "number_of_sessions",
+  "sessions_completed",
+  "column_break_rrnk",
+  "date",
+  "patient",
+  "billing_section",
+  "payment_type",
+  "item",
+  "item_name"
+ ],
+ "fields": [
+  {
+   "default": "Open",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nClosed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_template",
+   "fieldtype": "Link",
+   "label": "Plan Template",
+   "options": "Procedure Plan Template",
+   "reqd": 1
+  },
+  {
+   "fieldname": "procedures",
+   "fieldtype": "Table MultiSelect",
+   "label": "Procedures",
+   "options": "Procedure Template Multi-select"
+  },
+  {
+   "default": "1",
+   "fetch_from": "plan_template.number_of_sessions",
+   "fetch_if_empty": 1,
+   "fieldname": "number_of_sessions",
+   "fieldtype": "Int",
+   "label": "Number Of Sessions"
+  },
+  {
+   "fieldname": "sessions_completed",
+   "fieldtype": "Int",
+   "label": "Sessions Completed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_rrnk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Today",
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "label": "Date"
+  },
+  {
+   "fieldname": "patient",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Patient",
+   "options": "Patient",
+   "reqd": 1
+  },
+  {
+   "fieldname": "billing_section",
+   "fieldtype": "Section Break",
+   "label": "Billing"
+  },
+  {
+   "default": "Single",
+   "fieldname": "payment_type",
+   "fieldtype": "Select",
+   "label": "Payment Type",
+   "options": "Single\nPackage"
+  },
+  {
+   "fetch_from": "plan_template.item",
+   "fetch_if_empty": 1,
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item",
+   "mandatory_depends_on": "eval:doc.payment_type == 'Package'",
+   "options": "Item"
+  },
+  {
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-10-14 11:24:43.127153",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Procedure Plan",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
