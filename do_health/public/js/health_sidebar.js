@@ -109,8 +109,6 @@
         if ($waiting.length) {
             $section.insertAfter($waiting);
             $("<div class='divider mt-4'></div>").insertAfter($waiting);
-        } else {
-            $sidebar.append($section);
         }
 
         return $section;
