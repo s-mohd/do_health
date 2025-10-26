@@ -5,5 +5,5 @@
 from frappe.model.document import Document
 
 
-class PractitionerBlock(Document):
+class AppointmentBillingItems(Document):
 	pass

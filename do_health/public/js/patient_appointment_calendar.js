@@ -1,4 +1,5 @@
 
+// Patient Appointment Calendar enhancements: custom scheduler configuration, rendering, and actions.
 // Constants and configuration
 const CONFIG = {
     LICENSE_KEY: 'CC-Attribution-NonCommercial-NoDerivatives',
@@ -9,7 +10,33 @@ const CONFIG = {
     SLOT_LABEL_INTERVAL: "00:15:00",
     SCROLL_TIME: "09:00:00",
     RESOURCE_AREA_WIDTH: '75px'
-}
+};
+
+// Quick visit status shortcuts surfaced in the context menu
+const VISIT_STATUS_OPTIONS = [
+    { value: 'Scheduled', label: 'Scheduled', icon: 'fa-calendar' },
+    { value: 'Arrived', label: 'Arrived', icon: 'fa-sign-in' },
+    { value: 'Ready', label: 'Ready', icon: 'fa-check-square-o' },
+    { value: 'In Room', label: 'In Room', icon: 'fa-stethoscope' },
+    { value: 'Completed', label: 'Completed', icon: 'fa-check-circle' },
+    { value: 'Cancelled', label: 'Cancelled', icon: 'fa-times-circle' },
+];
+
+// Appointment-level actions exposed through the context menu
+const ACTION_MENU_ITEMS = [
+    { action: 'editAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
+    { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-thumb-tack' },
+    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
+    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
+    { action: 'openBillingInterface', label: 'Billing & Services', icon: 'fa-credit-card' },
+    { action: 'updatePaymentType', label: 'Update Payment Type', icon: 'fa-exchange' },
+    { action: 'addVisitReason', label: 'Update Visit Reason', icon: 'fa-commenting' },
+    { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
+    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-calendar-plus-o' },
+    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-history' },
+];
+
+const CONTEXT_MENU_ID = 'patient-appointment-action-menu';
 
 frappe.views.calendar["Patient Appointment"] = {
     // State management
@@ -215,7 +242,17 @@ frappe.views.calendar["Patient Appointment"] = {
 
         // event click handler
         eventClick: function (info) {
-            frappe.views.calendar["Patient Appointment"].handleAppointmentClick(info);
+            if (info.jsEvent) {
+                info.jsEvent.preventDefault();
+                info.jsEvent.stopPropagation();
+            }
+            const anchor = info.jsEvent
+                ? { x: info.jsEvent.pageX, y: info.jsEvent.pageY }
+                : {
+                    x: info.el.getBoundingClientRect().left + window.scrollX,
+                    y: info.el.getBoundingClientRect().bottom + window.scrollY
+                };
+            frappe.views.calendar["Patient Appointment"].showActionsMenu(info.event, anchor);
         },
 
         // event hover handler
@@ -293,8 +330,6 @@ frappe.views.calendar["Patient Appointment"] = {
                 }, 25);
                 sessionStorage.just_logged_in = 0;
             }
-
-            console.log(info)
 
             set_current_session(info.view);
             update_waiting_list();
@@ -607,61 +642,150 @@ frappe.views.calendar["Patient Appointment"] = {
 
     // Add event interactions
     addEventInteractions: function (info) {
-        var event = info.event;
-        var element = info.el;
+        const event = info.event;
+        const element = info.el;
+        const calendarView = this;
 
-        // Right-click handler
+        // Right-click should take the user straight to editing the appointment
         element.addEventListener('contextmenu', function (e) {
             e.preventDefault();
-
-            // Remove any existing menu
-            $('#custom-menu').remove();
-
-            // Create the menu
-            const menuHtml = `
-                <ul id="custom-menu" class="dropdown-menu show" role="menu" style="position: absolute; z-index: 1050;">
-                    <li class="dropdown-item" href="#">Open Appointment</li>
-                    <li class="dropdown-item" href="#">Cancel Appointment</li>
-                    <li class="dropdown-item" href="#">Billing</li>
-                </ul>
-            `;
-
-            // Append the menu to the body
-            $('body').append(menuHtml);
-
-            // Position the menu at the cursor
-            $('#custom-menu').css({
-                top: e.pageY + 'px',
-                left: e.pageX + 'px'
-            });
-
-            // Add click handlers for menu items
-            $('#custom-menu .dropdown-item').on('click', function () {
-                const action = $(this).text();
-                if (action === 'Edit Appointment') {
-                    appointmentActions.editAppointment(event.id);
-                }
-                else if (action === 'Vital Signs') {
-                    frappe.confirm('Are you sure you want to cancel this appointment?', () => {
-                        frappe.msgprint('Appointment canceled');
-                    });
-                }
-                else if (action === 'Billing') {
-                    appointmentActions.openBillingInterface(event.id);
-                }
-
-                // Remove the menu after selection
-                $('#custom-menu').remove();
-            });
-
-            // Remove the menu if clicked outside
-            $(document).on('click', function () {
-                $('#custom-menu').remove();
-            });
+            calendarView.handleAppointmentClick(info);
         });
+
+        // Allow status badge click to open quick status shortcuts
+        const statusEl = element.querySelector('.appt-status');
+        if (statusEl) {
+            statusEl.classList.add('interactive-status');
+            statusEl.setAttribute('title', __('Update visit status'));
+            statusEl.style.cursor = 'pointer';
+            statusEl.addEventListener('click', function (e) {
+                e.stopPropagation();
+                const rect = statusEl.getBoundingClientRect();
+                calendarView.showActionsMenu(
+                    event,
+                    {
+                        x: rect.left + window.scrollX,
+                        y: rect.bottom + window.scrollY
+                    },
+                    'status'
+                );
+            });
+        }
 
         // Create popover
         this.createPopover(element, event);
+    },
+
+    // Build and display the contextual action menu
+    showActionsMenu: function (event, anchor, focusSection) {
+        const menuId = CONTEXT_MENU_ID;
+        const existingMenu = $(`#${menuId}`);
+        if (existingMenu.length) {
+            existingMenu.remove();
+        }
+
+        const $menu = $(`<div id="${menuId}" class="dropdown-menu show appointment-context-menu" role="menu"></div>`);
+        let menuHtml = '';
+
+        if (VISIT_STATUS_OPTIONS.length) {
+            const activeStatus = (event.extendedProps.status || '').toLowerCase();
+            menuHtml += `
+        <div class="dropdown-submenu">
+            <a class="dropdown-item dropdown-toggle" href="#">${__('Change Visit Status')}</a>
+            <div class="dropdown-menu">
+                ${VISIT_STATUS_OPTIONS.map(status => `
+                    <a class="dropdown-item js-status-option ${status.value.toLowerCase() === activeStatus ? 'active' : ''}"
+                       data-status="${status.value}">
+                        <i class="fa ${status.icon}"></i> ${__(status.label)}
+                    </a>
+                `).join('')}
+            </div>
+        </div>
+    `;
+        }
+
+        if (ACTION_MENU_ITEMS.length) {
+            if (VISIT_STATUS_OPTIONS.length) {
+                menuHtml += '<div class="dropdown-divider"></div>';
+            }
+            menuHtml += `<div class="dropdown-header">${__('Appointment Actions')}</div>`;
+            menuHtml += ACTION_MENU_ITEMS.map(item => `
+                <a class="dropdown-item js-action-item" data-action="${item.action}">
+                    <i class="fa ${item.icon}"></i> ${__(item.label)}
+                </a>
+            `).join('');
+        }
+
+        if (!menuHtml) {
+            return;
+        }
+
+        $menu.html(menuHtml);
+        $('body').append($menu);
+
+        const viewportWidth = $(window).width();
+        const viewportHeight = $(window).height();
+        const menuWidth = $menu.outerWidth();
+        const menuHeight = $menu.outerHeight();
+
+        let left = anchor.x;
+        let top = anchor.y;
+
+        if (left + menuWidth > viewportWidth) {
+            left = viewportWidth - menuWidth - 8;
+        }
+        if (top + menuHeight > viewportHeight + window.scrollY) {
+            top = anchor.y - menuHeight;
+        }
+
+        $menu.css({
+            position: 'absolute',
+            top: `${top}px`,
+            left: `${left}px`,
+            zIndex: 1050
+        });
+
+        if (focusSection === 'status') {
+            const statusToFocus = $menu.find('.js-status-option.active');
+            (statusToFocus.length ? statusToFocus : $menu.find('.js-status-option').first()).focus();
+        }
+
+        const closeMenu = () => {
+            $menu.remove();
+            $(document).off('click', handleOutsideClick);
+            $(window).off('resize', closeMenu);
+            $('body').off('scroll', closeMenu);
+        };
+
+        const handleOutsideClick = (e) => {
+            if (!$(e.target).closest(`#${menuId}`).length) {
+                closeMenu();
+            }
+        };
+
+        setTimeout(() => {
+            $(document).on('click', handleOutsideClick);
+        }, 0);
+
+        $(window).on('resize', closeMenu);
+        $('body').on('scroll', closeMenu);
+
+        $menu.on('click', '.js-status-option', async function (e) {
+            e.preventDefault();
+            const status = $(this).data('status');
+            await appointmentActions.setVisitStatus(event.id, status);
+            closeMenu();
+        });
+
+        $menu.on('click', '.js-action-item', async function (e) {
+            e.preventDefault();
+            const actionKey = $(this).data('action');
+            const handler = appointmentActions[actionKey];
+            if (typeof handler === 'function') {
+                await handler(event.id, event.extendedProps, focusSection);
+            }
+            closeMenu();
+        });
     },
 
     // Create popover
@@ -811,6 +935,15 @@ frappe.views.calendar["Patient Appointment"] = {
         }
     },
 
+    // Convenience helper to refresh the calendar after server-side updates
+    refreshCalendar: function () {
+        if (cur_list?.calendar?.fullCalendar) {
+            cur_list.calendar.fullCalendar.refetchEvents();
+        } else if (typeof cur_list?.refresh === 'function') {
+            cur_list.refresh();
+        }
+    },
+
     // Get cached resources
     getCachedResources: function (cacheKey, cacheTime) {
         const cached = sessionStorage.getItem(cacheKey);
@@ -884,83 +1017,7 @@ function render_waiting_list_table(data) {
         $("div.col-lg-2.layout-side-section").css('max-width', '25%');      // increase the wating list width
         $("div.col-lg-2.layout-side-section").css('padding', '1px');
         $("div.monthdatepicker").css("width: 300px");
-        // wating list
-        $("#monthdatepicker").append(function () {
-            return $(`
-                <div id="Wating-List">  
-                    <table id="waitinglist" class="table table-striped table-hover table-condensed">
-                        <thead>
-                         <tr>
-                           <th class="text-left small" style="padding: 1px">Patient</th>
-                           <th class="text-right small" style="padding: 1px">Waited</th>
-                           <th class="text-right small" style="padding: 1px">Arrived</th>
-                         </tr>
-                        </thead>
-                        <tbody></tbody>
-                        </table>
-                </div>
-            `)
-        });
     }
-
-    $("#waitinglist tbody").remove();
-    var rows = '';
-
-    if (data) {
-        for (var i in data) {
-            var name = `${data[i].patient_name.trim().split(' ')[0]} ${data[i].patient_name.trim().split(' ').splice(-1)}`
-            var arrival_time = moment(data[i].arrival_time, "HH:mm:ss");
-            var arrived = moment().diff(arrival_time) < 60000 ? '1m' : SEhumanizer(moment().diff(arrival_time), { units: ['h', 'm', 's'], largest: 2, round: true });
-            var from_time = moment(data[i].appointment_time, "HH:mm:ss");
-            var delayed_by = moment().diff(from_time);
-            var punctuality = arrival_time.diff(from_time);
-            var provider = data[i].practitioner;
-
-            if (provider == 'Dr Nedhal' || provider == 'Walk-in DO') {
-                // provider = 'background-color: #ffa685;color: black;';
-                provider = 'background-color: #FFB4A2;color: black;';
-                // provider = 'orange';
-            } else if (provider == 'Dr Sadiq' || provider == 'Walk-in SC') {
-                provider = 'background-color: #7575ff; color: white;';
-                // provider = 'blue';
-            } else if (provider == 'Dr Amani') {
-                provider = 'background-color: #fdfd96; color: black;';
-            } else if (provider == 'Dr Kameela') {
-                provider = 'background-color: #ffc4c4; color: black;';
-            } else if (provider == 'SurgiCare') {
-                provider = 'background-color: #a83333; color: white;';
-                // <span class="${provider != '' ? 'indicator' : ''} ${provider}"></span>
-            } else {
-                provider = ''
-            }
-
-            rows += `
-            <tr  data-appt="${data[i].name}" title="Appointment ${delayed_by < -60000 ? 'is in ' + SEhumanizer(delayed_by, { units: ['h', 'm', 's'], largest: 2, round: true }) : (delayed_by < 60000 ? 'is now' : 'delayed by ' + SEhumanizer(delayed_by, { units: ['h', 'm', 's'], largest: 2, round: true }))}">
-            <td style="${provider} padding: 1px">
-                <strong><small>
-                ${name}
-                </small></strong>
-            </td>
-            <td class="text-right" style="${moment().diff(arrival_time, 'minutes') > 60 ? 'color: red;' : ''} padding: 1px">${arrived}</td>
-            <td class="text-right small" style="padding: 1px">
-                ${punctuality < -240000 ? SEhumanizer(punctuality, { units: ['h', 'm', 's'], largest: 2, round: true }) + ' early' : (punctuality < 240000 ? 'on time' : SEhumanizer(punctuality, { units: ['h', 'm', 's'], largest: 2, round: true }) + ' late')}
-            </td>
-            </tr>
-            `;
-
-        }
-    }
-    $('#waitinglist').append(`<tbody>${rows}</tbody>`);
-    $('#waitinglist tr').each(function (i, e) {
-        if ($(e).data('appt')) {
-            $(e).popoverButton({
-                trigger: 'hover focus',
-                target: `#popoverX-${$(e).data('appt')}`,
-                placement: 'auto-right',
-                padding: '1px'
-            });
-        }
-    });
 }
 
 function set_current_session(view) {
@@ -1100,176 +1157,206 @@ async function generateAppointmentInvoice(appointment) {
 }
 
 const appointmentActions = {
-    // 1. Edit Appointment
+    // Common helpers ---------------------------------------------------------
+    async fetchAppointmentFields(appointmentId, fields = []) {
+        const fieldList = Array.isArray(fields) ? fields : [fields];
+        if (!fieldList.length) {
+            return {};
+        }
+        const { message } = await frappe.db.get_value('Patient Appointment', appointmentId, fieldList);
+        return message || {};
+    },
+
+    refreshCalendar() {
+        frappe.views.calendar["Patient Appointment"].refreshCalendar();
+    },
+
+    // Appointment navigation & clinical flows --------------------------------
     editAppointment(appointmentId) {
         frappe.set_route('Form', 'Patient Appointment', appointmentId);
     },
 
-    // 2. Add Vital Signs
     addVitalSigns(appointmentId) {
         frappe.new_doc('Vital Signs', {
             appointment: appointmentId,
         });
     },
 
-    // 3. Billing and Payment
     async openBillingInterface(appointmentId) {
-        await frappe.db.get_doc('Patient Appointment', appointmentId)
-            .then(async (appointment) => {
-                const dialog = new frappe.ui.Dialog({
-                    title: `💳 Billing — ${appointment.patient_name}`,
-                    size: 'extra-large',
-                    primary_action_label: 'Generate Invoice',
-                    primary_action: async () => {
-                        await generateAppointmentInvoice(appointment);
-                        dialog.hide();
-                        frappe.show_alert({ message: 'Invoice created successfully', indicator: 'green' });
-                    },
-                });
+        const appointment = await frappe.db.get_doc('Patient Appointment', appointmentId);
 
-                dialog.$body.html(`
-                    <div class="billing-wrapper flex" style="gap: 20px; min-height: 500px;">
-                    
-                    <!-- Left Column: Services Library -->
-                    <div class="services-library w-1/2 bg-gray-50 p-3 rounded-xl overflow-y-auto border">
-                        <h5 class="font-semibold mb-3">Available Services</h5>
-                        <div class="service-items grid grid-cols-2 gap-3" id="available-services"></div>
+        const dialog = new frappe.ui.Dialog({
+            title: `💳 Billing — ${appointment.patient_name}`,
+            size: 'extra-large',
+            primary_action_label: __('Generate Invoice'),
+            primary_action: async () => {
+                await generateAppointmentInvoice(appointment);
+                dialog.hide();
+                frappe.show_alert({ message: __('Invoice created successfully'), indicator: 'green' });
+                this.refreshCalendar();
+            },
+        });
+
+        dialog.$body.html(`
+            <div class="billing-wrapper flex" style="gap: 20px; min-height: 500px;">
+                <div class="services-library w-1/2 bg-gray-50 p-3 rounded-xl overflow-y-auto border">
+                    <h5 class="font-semibold mb-3">${__('Available Services')}</h5>
+                    <div class="service-items grid grid-cols-2 gap-3" id="available-services"></div>
+                </div>
+                <div class="selected-services w-1/2 p-3 rounded-xl border">
+                    <h5 class="font-semibold mb-3">${__('Selected Services')}</h5>
+                    <div id="selected-services" class="selected-items space-y-3"></div>
+                    <hr class="my-3" />
+                    <div class="billing-summary text-sm">
+                        <div class="flex justify-between"><span>${__('Patient Share')}:</span> <span id="patient-total">0</span></div>
+                        <div class="flex justify-between"><span>${__('Insurance Share')}:</span> <span id="insurance-total">0</span></div>
+                        <div class="flex justify-between font-bold border-t mt-2 pt-2"><span>${__('Total')}:</span> <span id="total-price">0</span></div>
                     </div>
+                </div>
+            </div>
+        `);
 
-                    <!-- Right Column: Selected & Billing Details -->
-                    <div class="selected-services w-1/2 p-3 rounded-xl border">
-                        <h5 class="font-semibold mb-3">Selected Services</h5>
-                        <div id="selected-services" class="selected-items space-y-3"></div>
-                        
-                        <hr class="my-3" />
-
-                        <div class="billing-summary text-sm">
-                        <div class="flex justify-between"><span>Patient Share:</span> <span id="patient-total">0</span></div>
-                        <div class="flex justify-between"><span>Insurance Share:</span> <span id="insurance-total">0</span></div>
-                        <div class="flex justify-between font-bold border-t mt-2 pt-2"><span>Total:</span> <span id="total-price">0</span></div>
-                        </div>
-                    </div>
-                    </div>
-                `);
-
-                await dialog.show();
-                console.log('dialog')
-                console.log(document.getElementById('available-services'))
-
-                await loadAvailableServices(appointment);
-                await renderSelectedServices(appointment);
-            });
+        await dialog.show();
+        await loadAvailableServices(appointment);
+        await renderSelectedServices(appointment);
     },
 
-    // 4. Update Payment Type
-    async updatePaymentType(appointmentId, paymentType) {
+    async pinPatientToSidebar(appointmentId, context = {}) {
+        const sidebarApi = window.doHealthSidebar;
+        if (!sidebarApi || typeof sidebarApi.selectPatient !== 'function') {
+            frappe.show_alert({ message: __('Sidebar is not ready yet'), indicator: 'orange' });
+            return;
+        }
+
+        let patientContext = {
+            patient: context.patient || context.customer || context.patient_id || null,
+            patient_name: context.full_name || context.patient_name || context.customer_name || context.customer || '',
+            appointment: appointmentId,
+            arrival_time: context.arrival_time || context.check_in_time || null,
+            patient_image: context.image || context.patient_image || null
+        };
+
+        if (!patientContext.patient) {
+            const details = await appointmentActions.fetchAppointmentFields(appointmentId, ['patient', 'patient_name']);
+            patientContext.patient = details.patient;
+            patientContext.patient_name = details.patient_name || patientContext.patient;
+        }
+
+        if (!patientContext.patient) {
+            frappe.show_alert({ message: __('Unable to identify patient for this appointment'), indicator: 'red' });
+            return;
+        }
+
+        sidebarApi.selectPatient(patientContext);
+        frappe.show_alert({
+            message: __('Patient pinned to sidebar'),
+            indicator: 'green'
+        });
+    },
+
+    async updatePaymentType(appointmentId, context = {}) {
+        const defaults = context?.custom_payment_type
+            ? { custom_payment_type: context.custom_payment_type }
+            : await appointmentActions.fetchAppointmentFields(appointmentId, 'custom_payment_type');
+
         frappe.prompt(
             {
                 fieldname: 'payment_type',
-                label: 'Payment Type',
+                label: __('Payment Type'),
                 fieldtype: 'Select',
                 options: ['', 'Self Payment', 'Insurance'],
-                default: paymentType,
+                default: defaults.custom_payment_type || '',
                 reqd: 1,
             },
             async (values) => {
-                await frappe.db.set_value('Patient Appointment', appointmentId, 'custom_payment_type', values.payment_type)
-                    .then(r => {
-                        frappe.show_alert('Payment type updated');
-                    })
+                await frappe.db.set_value('Patient Appointment', appointmentId, 'custom_payment_type', values.payment_type);
+                frappe.show_alert({ message: __('Payment type updated'), indicator: 'green' });
+                this.refreshCalendar();
             },
-            'Update Payment Type',
-            'Update'
+            __('Update Payment Type'),
+            __('Update')
         );
     },
 
-    // 5. Add Patient Encounter
-    addPatientEncounter(appointmentId) {
-        frappe.db.get_value('Patient Encounter', { appointment: appointmentId, docstatus: ['!=', 2] }, 'name')
-            .then(encounter => {
-                if (encounter.message.name) {
-                    frappe.set_route('Form', 'Patient Encounter', encounter.message.name);
-                }
-                else {
-                    frappe.db.get_value('Patient Appointment',
-                        appointmentId,
-                        ['name', 'practitioner', 'patient', 'department']
-                    ).then(function (appointment) {
-                        const appointmentDoc = appointment.message; // Fixed: massage -> message
-                        frappe.new_doc('Patient Encounter', {}, newEncounter => {
-                            newEncounter.appointment = appointmentDoc.name;
-                            newEncounter.encounter_date = frappe.datetime.nowdate();
-                            newEncounter.encounter_time = frappe.datetime.now_time();
-                            newEncounter.patient = appointmentDoc.patient;
-                            newEncounter.practitioner = appointmentDoc.practitioner;
-                            newEncounter.medical_department = appointmentDoc.department;
-                        });
-                    });
-                }
-            })
+    async addPatientEncounter(appointmentId) {
+        const encounter = await frappe.db.get_value(
+            'Patient Encounter',
+            { appointment: appointmentId, docstatus: ['!=', 2] },
+            'name'
+        );
+
+        if (encounter.message?.name) {
+            frappe.set_route('Form', 'Patient Encounter', encounter.message.name);
+            return;
+        }
+
+        const appointment = await appointmentActions.fetchAppointmentFields(appointmentId, [
+            'name',
+            'practitioner',
+            'patient',
+            'department'
+        ]);
+
+        frappe.new_doc('Patient Encounter', {}, (newEncounter) => {
+            newEncounter.appointment = appointment.name;
+            newEncounter.encounter_date = frappe.datetime.nowdate();
+            newEncounter.encounter_time = frappe.datetime.now_time();
+            newEncounter.patient = appointment.patient;
+            newEncounter.practitioner = appointment.practitioner;
+            newEncounter.medical_department = appointment.department;
+        });
     },
 
-    // 6. Add Visit Note
-    addVisitNote(appointmentId, visitNotes) {
+    async addVisitNote(appointmentId, context = {}) {
+        const defaults = context?.custom_visit_notes
+            ? { custom_visit_notes: context.custom_visit_notes }
+            : await appointmentActions.fetchAppointmentFields(appointmentId, 'custom_visit_notes');
+
         frappe.prompt(
             {
                 fieldname: 'visit_notes',
-                label: 'Visit Notes',
+                label: __('Visit Notes'),
                 fieldtype: 'Small Text',
-                default: visitNotes,
+                default: defaults.custom_visit_notes || '',
             },
             async (values) => {
-                await frappe.db.set_value('Patient Appointment', appointmentId, 'custom_visit_notes', values.visit_notes)
-                    .then(r => {
-                        frappe.show_alert('Payment type updated');
-                    })
+                await frappe.db.set_value('Patient Appointment', appointmentId, 'custom_visit_notes', values.visit_notes);
+                frappe.show_alert({ message: __('Visit notes updated'), indicator: 'green' });
+                this.refreshCalendar();
             },
-            'Update Payment Type',
-            'Update'
+            __('Update Visit Notes'),
+            __('Update')
         );
     },
 
-    // 7. Change Visit Status
-    async changeVisitStatus(appointmentId) {
-        frappe.prompt(
-            {
-                fieldname: 'status',
-                label: 'Visit Status',
-                fieldtype: 'Select',
-                options: ['Checked In', 'Under Consultation', 'Completed', 'Cancelled'],
-                reqd: 1,
-            },
-            async (values) => {
-                await frappe.call({
-                    method: 'do_health.api.methods.update_visit_status',
-                    args: {
-                        appointment_id: appointmentId,
-                        status: values.status,
-                    },
-                    callback() {
-                        frappe.show_alert('Visit status updated');
-                    },
-                });
-            },
-            'Change Visit Status',
-            'Update'
-        );
+    async setVisitStatus(appointmentId, status) {
+        if (!status) {
+            return;
+        }
+
+        await frappe.db.set_value('Patient Appointment', appointmentId, 'custom_visit_status', status)
+
+        frappe.show_alert({ message: __('Visit status updated'), indicator: 'green' });
+        this.refreshCalendar();
     },
 
-    // 8. Add / Book Follow-up Appointment
     bookFollowUp(appointmentId) {
         frappe.new_doc('Patient Appointment', {
             follow_up_of: appointmentId,
         });
     },
 
-    // 9. Add Visit Reason
-    async addVisitReason(appointmentId) {
+    async addVisitReason(appointmentId, context = {}) {
+        const defaults = context?.visit_reason
+            ? { visit_reason: context.visit_reason }
+            : await appointmentActions.fetchAppointmentFields(appointmentId, 'visit_reason');
+
         frappe.prompt(
             {
                 fieldname: 'reason',
-                label: 'Visit Reason',
+                label: __('Visit Reason'),
                 fieldtype: 'Small Text',
+                default: defaults.visit_reason || '',
                 reqd: 1,
             },
             async (values) => {
@@ -1278,41 +1365,36 @@ const appointmentActions = {
                     args: {
                         appointment_id: appointmentId,
                         reason: values.reason,
-                    },
-                    callback() {
-                        frappe.show_alert('Visit reason updated');
-                    },
+                    }
                 });
+                frappe.show_alert({ message: __('Visit reason updated'), indicator: 'green' });
+                this.refreshCalendar();
             },
-            'Add Visit Reason',
-            'Save'
+            __('Update Visit Reason'),
+            __('Save')
         );
     },
 
-    // 10. Show Patient Visit Log
     async showVisitLog(appointmentId) {
-        const r = await frappe.call({
+        const response = await frappe.call({
             method: 'do_health.api.methods.get_visit_log',
             args: { appointment_id: appointmentId },
         });
 
-        if (r.message && r.message.length) {
-            let logHtml = r.message
-                .map(
-                    (entry) =>
-                        `<div>
-              <b>${entry.date}</b> - ${entry.action} by ${entry.user}
-            </div>`
-                )
+        if (response.message && response.message.length) {
+            const logHtml = response.message
+                .map(entry => `<div><b>${frappe.datetime.str_to_user(entry.date)}</b> — ${entry.action} ${__('by')} ${entry.user}</div>`)
                 .join('');
+
             frappe.msgprint({
-                title: 'Visit Log',
+                title: __('Visit Log'),
                 message: logHtml,
                 indicator: 'blue',
             });
-        } else {
-            frappe.msgprint('No visit logs found.');
+            return;
         }
+
+        frappe.msgprint(__('No visit logs found.'));
     },
 };
 
@@ -2144,6 +2226,9 @@ const enhancedStyles = `
     background: #a8a8a8;
 }
 
+.appointment-context-menu{
+    overflow: unset
+}
 
 .dropdown-submenu {
     position: relative;

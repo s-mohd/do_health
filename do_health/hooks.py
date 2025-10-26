@@ -1,9 +1,12 @@
+from . import __version__ as app_version
+
 app_name = "do_health"
 app_title = "Do Health"
 app_publisher = "Sayed Mohamed"
 app_description = "an extention for the frappe healthcare app"
 app_email = "sayed10998@gmail.com"
 app_license = "mit"
+app_version = "1.0.0"
 
 # Apps
 # ------------------
@@ -32,6 +35,8 @@ app_include_css = [
     "/assets/do_health/css/patient_encounter.css",
 ]
 app_include_js = [
+    "/assets/do_health/js/apps_switcher.js",
+    "/assets/do_health/js/health_sidebar.js",
 	"/assets/do_health/js/calendar.js",
 	"/assets/do_health/js/lib/imagemapster/jquery.imagemapster.min.js",
 	"/assets/do_health/js/lib/p5/p5.min.js",

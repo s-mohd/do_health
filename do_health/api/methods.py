@@ -1151,14 +1151,32 @@ def get_availability_data(date, practitioner, appointment):
 
 @frappe.whitelist()
 def get_waiting_list():
-	# Get the waiting list
-	return frappe.db.sql("""
-		SELECT pa.name, pa.patient_name, pa.patient, pa.practitioner, at.time as arrival_time, pa.appointment_time, pa.appointment_date
+    return frappe.db.sql("""
+        SELECT 
+			pa.name,
+			pa.patient_name,
+			pa.patient,
+			p.image AS patient_image,
+			pa.practitioner,
+			at.arrival_time,
+			pa.appointment_time,
+			pa.appointment_date
 		FROM `tabPatient Appointment` pa
-		LEFT JOIN `tabAppointment Time Logs` at ON pa.name = at.parent AND at.status = 'Arrived'
-		WHERE pa.custom_visit_status = 'Arrived' AND pa.appointment_date = CURDATE()
-		ORDER BY at.time DESC
-	""", as_dict=True)
+		LEFT JOIN (
+			SELECT parent, MAX(time) AS arrival_time
+			FROM `tabAppointment Time Logs`
+			WHERE status = 'Arrived'
+			GROUP BY parent
+		) at ON pa.name = at.parent
+		LEFT JOIN `tabPatient` p 
+			ON pa.patient = p.name
+		WHERE pa.custom_visit_status = 'Arrived' 
+		AND pa.appointment_date = CURDATE()
+		ORDER BY at.arrival_time DESC
+		LIMIT 5;
+
+    """, as_dict=True)
+
 
 @frappe.whitelist()
 def determine_service_price_for_service(appt, service_name):
