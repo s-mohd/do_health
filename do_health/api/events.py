@@ -17,6 +17,9 @@ def patient_appointment_inserted(doc, method=None):
         doc.save()
         # frappe.db.set_value("Patient Appointment", doc.appointment, "custom_visit_status", "Arrived")
 
+def patient_appointment_update(doc, method=None):
+    frappe.publish_realtime("patient_appointment_updated", doc)
+
 def patient_encounter_inserted(doc, method=None):
     if doc.appointment:
         # appointment = frappe.get_doc('Patient Appointment', doc.appointment)

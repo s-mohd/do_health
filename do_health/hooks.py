@@ -187,7 +187,7 @@ doc_events = {
     },
     'Patient Appointment':{
         "after_insert": "do_health.api.events.patient_appointment_inserted",
-        "on_update": "do_health.api.methods.get_appointments"
+        "on_update": "do_health.api.events.patient_appointment_update"
     },
     'Patient Encounter':{
         "after_insert": "do_health.api.events.patient_encounter_inserted",
@@ -204,6 +204,11 @@ doc_events = {
         "on_update": "do_health.api.events.medication_request_update",
         "on_submit": "do_health.api.events.medication_request_update"
     },
+    "Sales Invoice": {
+        "on_submit": "do_health.api.methods.sync_patient_billing_status",
+        "on_cancel": "do_health.api.methods.sync_patient_billing_status",
+        "on_update_after_submit": "do_health.api.methods.sync_patient_billing_status",
+    }
 }
 
 # Scheduled Tasks

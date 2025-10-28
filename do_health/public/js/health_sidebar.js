@@ -12,7 +12,7 @@
     let lastWaitingPatients = [];
     let initialized = false;
     let refreshTimerId = null;
-    let realtimeHandlerRegistered = false;
+    let realtimeHandlerRegistered = true;
 
     const translate = (...args) => (typeof __ === "function" ? __(...args) : args[0]);
     const isValidDate = (value) => value && !Number.isNaN(new Date(value).getTime());
@@ -99,7 +99,7 @@
         const $header = $("<div>", { class: "standard-sidebar-item" });
         $header.append(
             $("<div>", { class: "item-anchor block-click" }).append(
-                $("<span>", { class: "sidebar-item-icon" }).html(iconMarkup("user", "md")),
+                $("<span>", { class: "sidebar-item-icon" }).append(iconMarkup("user", "md")),
                 $("<span>", { class: "sidebar-item-label", style: "font-weight: 700;", text: translate("Selected Patient") })
             )
         );
@@ -108,7 +108,7 @@
         const $waiting = $(WAITING_SECTION_SELECTOR);
         if ($waiting.length) {
             $section.insertAfter($waiting);
-            $("<div class='divider mt-4'></div>").insertAfter($waiting);
+            $("<div class='divider'></div>").insertAfter($waiting);
         }
 
         return $section;
@@ -214,7 +214,10 @@
             $child.append(
                 $("<div>", { class: "sidebar-item-container" }).append(
                     $("<div>", { class: "standard-sidebar-item" }).append(
-                        $("<span>", { class: "sidebar-item-label text-muted", text: translate("No patients") })
+                        $("<div>", { class: "item-anchor" }).append(
+                            $("<span>", { class: "sidebar-item-icon" }).append(iconMarkup("users", "sm")),
+                            $("<span>", { class: "sidebar-item-label text-muted", text: translate("No patients") })
+                        )
                     )
                 )
             );
@@ -273,10 +276,10 @@
         restorePatientContext();
 
         // realtime
-        if (!realtimeHandlerRegistered) {
-            frappe.realtime.on("patient_appointments_updated", () => fetchWaitingPatients());
-            realtimeHandlerRegistered = true;
-        }
+        frappe.realtime.on("patient_appointment_updated", () => {
+            console.log('hi')
+            fetchWaitingPatients()
+        });
 
         if (refreshTimerId) clearInterval(refreshTimerId);
         refreshTimerId = setInterval(() => {

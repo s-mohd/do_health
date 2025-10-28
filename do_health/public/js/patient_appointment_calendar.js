@@ -26,7 +26,7 @@ const VISIT_STATUS_OPTIONS = [
 const ACTION_MENU_ITEMS = [
     { action: 'editAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
     { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-thumb-tack' },
-    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
+    { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
     { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
     { action: 'openBillingInterface', label: 'Billing & Services', icon: 'fa-credit-card' },
     { action: 'updatePaymentType', label: 'Update Payment Type', icon: 'fa-exchange' },
@@ -43,7 +43,11 @@ frappe.views.calendar["Patient Appointment"] = {
     state: {
         showDoctorsOnly: false,
         showcancelled: false,
-        currentView: 'resourceTimeGridDay'
+        currentView: 'resourceTimeGridDay',
+        resources: [],
+        availabilityCache: {},
+        lastViewInfo: null,
+        unavailableByResourceDate: {}
     },
 
     // Get CSS class names based on status
@@ -135,7 +139,13 @@ frappe.views.calendar["Patient Appointment"] = {
             // Check cache first
             const cached = frappe.views.calendar["Patient Appointment"].getCachedResources(cacheKey, cacheTime);
             if (cached) {
+                const calendarView = frappe.views.calendar["Patient Appointment"];
+                calendarView.state.resources = cached;
                 successCallback(cached);
+                if (calendarView.state.lastViewInfo) {
+                    calendarView.ensureUnavailableSlotStyles();
+                    calendarView.markUnavailableSlots(calendarView.state.lastViewInfo).catch(console.warn);
+                }
                 return;
             }
 
@@ -152,7 +162,9 @@ frappe.views.calendar["Patient Appointment"] = {
                     ],
                 },
                 callback: (r) => {
-                    const resources = r.message.map(practitioner => ({
+                    const calendarView = frappe.views.calendar["Patient Appointment"];
+                    const list = Array.isArray(r.message) ? r.message : [];
+                    const resources = list.map(practitioner => ({
                         id: practitioner.name,
                         title: practitioner.first_name,
                         backgroundColor: practitioner.custom_background_color,
@@ -163,9 +175,16 @@ frappe.views.calendar["Patient Appointment"] = {
                         }
                     }));
 
+                    calendarView.state.resources = resources;
+
                     // Cache the results
-                    frappe.views.calendar["Patient Appointment"].cacheResources(cacheKey, resources);
+                    calendarView.cacheResources(cacheKey, resources);
                     successCallback(resources);
+
+                    if (calendarView.state.lastViewInfo) {
+                        calendarView.ensureUnavailableSlotStyles();
+                        calendarView.markUnavailableSlots(calendarView.state.lastViewInfo).catch(console.warn);
+                    }
                 },
                 error: () => failureCallback()
             });
@@ -200,7 +219,10 @@ frappe.views.calendar["Patient Appointment"] = {
             doctors: {
                 text: 'All Doctors',
                 click: function () {
-                    frappe.views.calendar["Patient Appointment"].toggleViewMode('doctors');
+                    frappe.views.calendar["Patient Appointment"].state.showDoctorsOnly = !frappe.views.calendar["Patient Appointment"].state.showDoctorsOnly;
+                    console.log(frappe.views.calendar["Patient Appointment"].state)
+                    cur_list.calendar.fullCalendar.refetchEvents()
+                    cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
                 }
             },
             cancelled: {
@@ -208,6 +230,7 @@ frappe.views.calendar["Patient Appointment"] = {
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].state.showcancelled = !frappe.views.calendar["Patient Appointment"].state.showcancelled;
                     cur_list.calendar.fullCalendar.refetchEvents()
+                    cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
 
                     if (frappe.views.calendar["Patient Appointment"].state.showcancelled)
                         $(this).text('Hide Cancelled')
@@ -237,7 +260,7 @@ frappe.views.calendar["Patient Appointment"] = {
 
         // select handler
         select: function (info) {
-            frappe.views.calendar["Patient Appointment"].createNewAppointment(info);
+            frappe.views.calendar["Patient Appointment"].handleSlotSelection(info);
         },
 
         // event click handler
@@ -283,9 +306,15 @@ frappe.views.calendar["Patient Appointment"] = {
 
         // event rendering
         eventDidMount: function (info) {
-            frappe.views.calendar["Patient Appointment"].applyEventStyling(info);
-            frappe.views.calendar["Patient Appointment"].enhanceEventContent(info);
-            frappe.views.calendar["Patient Appointment"].addEventInteractions(info);
+            const calendarView = frappe.views.calendar["Patient Appointment"];
+            if (info.event.display === 'background' && info.event.extendedProps?.__availabilityOverlay) {
+                calendarView.decorateAvailabilityOverlay(info);
+                return;
+            }
+
+            calendarView.applyEventStyling(info);
+            calendarView.enhanceEventContent(info);
+            calendarView.addEventInteractions(info);
         },
 
         // event content
@@ -336,7 +365,13 @@ frappe.views.calendar["Patient Appointment"] = {
             sessionStorage.server_update = 0;
 
             // Update current view state
-            frappe.views.calendar["Patient Appointment"].state.currentView = info.view.type;
+            const calendarView = frappe.views.calendar["Patient Appointment"];
+            calendarView.state.currentView = info.view.type;
+            calendarView.state.lastViewInfo = info;
+            calendarView.ensureUnavailableSlotStyles();
+            calendarView.markUnavailableSlots(info).catch((err) => {
+                console.warn('Unable to mark unavailable slots', err);
+            });
         }
     },
 
@@ -489,6 +524,83 @@ frappe.views.calendar["Patient Appointment"] = {
             }, 500);
 
         }, 500);
+    },
+
+    // Validate resource availability before creating appointment
+    handleSlotSelection: function (info) {
+        const available = this.isSlotAvailable(info);
+        if (available) {
+            this.createNewAppointment(info);
+        } else {
+            this.unselectCurrentSlot(info);
+        }
+    },
+
+    // Check if the practitioner has the selected slot free
+    isSlotAvailable: function (info) {
+        const practitionerId = info.resource?.id || info.resourceId || '';
+        if (!practitionerId) {
+            return true;
+        }
+
+        const appointmentDate = moment(info.start).format('YYYY-MM-DD');
+        const selectedStart = moment(info.start);
+        const selectedEnd = moment(info.end);
+        const practitionerName = info.resource?.title || practitionerId;
+
+        const mapKey = `${practitionerId}__${appointmentDate}`;
+        const unavailableSlots = this.state?.unavailableByResourceDate?.[mapKey] || [];
+        if (!unavailableSlots.length) {
+            return true;
+        }
+
+        const blockingSlot = unavailableSlots.find(range => {
+            const rangeStart = moment(range.start);
+            const rangeEnd = moment(range.end);
+            if (!rangeStart.isValid() || !rangeEnd.isValid()) {
+                return false;
+            }
+            return selectedStart.isBefore(rangeEnd) && selectedEnd.isAfter(rangeStart);
+        });
+
+        if (!blockingSlot) {
+            return true;
+        }
+
+        const sanitize = (text) => {
+            if (!text) return '';
+            if (frappe.utils?.escape_html) {
+                return frappe.utils.escape_html(text);
+            }
+            const span = document.createElement('span');
+            span.textContent = text;
+            return span.innerHTML;
+        };
+
+        const messageParts = [
+            __('{0} is not available at the selected time.', [practitionerName])
+        ];
+        if (blockingSlot.reason) {
+            messageParts.push(__('Reason: {0}', [sanitize(blockingSlot.reason)]));
+        }
+        if (blockingSlot.note) {
+            messageParts.push(sanitize(blockingSlot.note));
+        }
+
+        frappe.show_alert({
+            message: messageParts.join('<br>'),
+            indicator: 'red'
+        });
+        return false;
+    },
+
+    // Clear calendar selection when slot is not valid
+    unselectCurrentSlot: function (info) {
+        if (info?.view?.calendar?.unselect) {
+            info.view.calendar.unselect();
+        } else if (cur_list?.calendar?.fullCalendar?.unselect) {
+            cur_list.calendar.fullCalendar.unselect();
+        }
     },
 
     // Create new appointment
@@ -649,7 +761,7 @@ frappe.views.calendar["Patient Appointment"] = {
         // Right-click should take the user straight to editing the appointment
         element.addEventListener('contextmenu', function (e) {
             e.preventDefault();
-            calendarView.handleAppointmentClick(info);
+            appointmentActions.editAppointment(event.id);
         });
 
         // Allow status badge click to open quick status shortcuts
@@ -676,6 +788,53 @@ frappe.views.calendar["Patient Appointment"] = {
         this.createPopover(element, event);
     },
 
+    decorateAvailabilityOverlay: function (info) {
+        const element = info.el;
+        if (!element) {
+            return;
+        }
+
+        element.classList.add('slot-unavailable-indicator');
+
+        const reason = info.event.extendedProps?.reason || '';
+        const note = info.event.extendedProps?.note || '';
+        const tooltipLines = [];
+
+        const sanitize = (text) => {
+            if (!text) return '';
+            if (frappe.utils?.escape_html) {
+                return frappe.utils.escape_html(text);
+            }
+            const span = document.createElement('span');
+            span.textContent = text;
+            return span.innerHTML;
+        };
+
+        if (reason) {
+            tooltipLines.push(__('Reason: {0}', [sanitize(reason)]));
+        }
+        if (note) {
+            tooltipLines.push(sanitize(note));
+        }
+
+        $(element).tooltip('dispose');
+
+        if (!tooltipLines.length) {
+            element.removeAttribute('title');
+            element.removeAttribute('data-original-title');
+            element.removeAttribute('data-toggle');
+            return;
+        }
+
+        element.setAttribute('title', tooltipLines.join('\n'));
+        element.setAttribute('data-toggle', 'tooltip');
+        $(element).tooltip({
+            container: 'body',
+            trigger: 'hover',
+            placement: 'top'
+        });
+    },
+
     // Build and display the contextual action menu
     showActionsMenu: function (event, anchor, focusSection) {
         const menuId = CONTEXT_MENU_ID;
@@ -690,18 +849,20 @@ frappe.views.calendar["Patient Appointment"] = {
         if (VISIT_STATUS_OPTIONS.length) {
             const activeStatus = (event.extendedProps.status || '').toLowerCase();
             menuHtml += `
-        <div class="dropdown-submenu">
-            <a class="dropdown-item dropdown-toggle" href="#">${__('Change Visit Status')}</a>
-            <div class="dropdown-menu">
-                ${VISIT_STATUS_OPTIONS.map(status => `
+                <div class="dropdown-submenu">
+                <a class="dropdown-item dropdown-toggle" href="#">
+                    ${__('Change Visit Status')}
+                </a>
+                <div class="dropdown-menu">
+                    ${VISIT_STATUS_OPTIONS.map(status => `
                     <a class="dropdown-item js-status-option ${status.value.toLowerCase() === activeStatus ? 'active' : ''}"
-                       data-status="${status.value}">
+                        data-status="${status.value}">
                         <i class="fa ${status.icon}"></i> ${__(status.label)}
                     </a>
-                `).join('')}
-            </div>
-        </div>
-    `;
+                    `).join('')}
+                </div>
+                </div>
+            `;
         }
 
         if (ACTION_MENU_ITEMS.length) {
@@ -942,6 +1103,255 @@ frappe.views.calendar["Patient Appointment"] = {
         } else if (typeof cur_list?.refresh === 'function') {
             cur_list.refresh();
         }
+        if (this.state?.lastViewInfo) {
+            this.ensureUnavailableSlotStyles();
+            this.markUnavailableSlots(this.state.lastViewInfo).catch((err) => {
+                console.warn('Unable to refresh availability overlays', err);
+            });
+        }
+    },
+
+    resetAvailabilityCache: function () {
+        this.state.availabilityCache = {};
+        this.state.unavailableByResourceDate = {};
+    },
+
+    ensureUnavailableSlotStyles: function () {
+        if (document.getElementById('slot-unavailable-style-tag')) {
+            return;
+        }
+        const styleEl = document.createElement('style');
+        styleEl.id = 'slot-unavailable-style-tag';
+        styleEl.textContent = `
+            .slot-unavailable-indicator {
+                background: repeating-linear-gradient(135deg, rgba(220, 53, 69, 0.16), rgba(220, 53, 69, 0.16) 12px, rgba(220, 53, 69, 0.05) 12px, rgba(220, 53, 69, 0.05) 24px) !important;
+                border: 0 !important;
+                pointer-events: none !important;
+            }
+        `;
+        document.head.appendChild(styleEl);
+    },
+
+    clearAvailabilityOverlays: function () {
+        const calendar = cur_list?.calendar?.fullCalendar;
+        if (!calendar || typeof calendar.getEvents !== 'function') {
+            return;
+        }
+        calendar.getEvents().forEach(event => {
+            if (event.extendedProps && event.extendedProps.__availabilityOverlay) {
+                event.remove();
+            }
+        });
+        $('.slot-unavailable-indicator[data-toggle="tooltip"]').tooltip('dispose');
+        this.state.unavailableByResourceDate = {};
+    },
+
+    getAvailabilityData: async function (practitionerId, date, opts) {
+        if (!practitionerId || !date) {
+            return null;
+        }
+
+        const cacheKey = `${practitionerId}__${date}`;
+        this.state.availabilityCache = this.state.availabilityCache || {};
+        const forceRefresh = opts && opts.forceRefresh;
+        if (!forceRefresh && this.state.availabilityCache[cacheKey]) {
+            return this.state.availabilityCache[cacheKey];
+        }
+
+        const response = await frappe.call({
+            method: 'do_health.api.methods.get_availability_data',
+            args: {
+                practitioner: practitionerId,
+                date,
+                appointment: {
+                    docstatus: 0,
+                    doctype: 'Patient Appointment',
+                    name: null,
+                    duration: 15
+                }
+            },
+            freeze: false
+        });
+
+        if (response.exc || response._server_messages) {
+            throw response;
+        }
+
+        const data = response.message || {};
+        this.state.availabilityCache[cacheKey] = data;
+        return data;
+    },
+
+    computeUnavailableRanges: function (slotDetails, dateStr, dayStart, dayEnd) {
+        const explicitlyUnavailable = [];
+        (slotDetails || []).forEach(slotInfo => {
+            (slotInfo.appointments || []).forEach(booked => {
+                if ((booked.type || '').toLowerCase() !== 'unavailable') {
+                    return;
+                }
+                const bookedStartRaw = moment(`${dateStr} ${booked.appointment_time}`, 'YYYY-MM-DD HH:mm:ss');
+                let bookedEndRaw = bookedStartRaw.clone();
+                const durationMinutes = parseInt(booked.duration, 10);
+                if (Number.isFinite(durationMinutes) && durationMinutes > 0) {
+                    bookedEndRaw = bookedEndRaw.add(durationMinutes, 'minutes');
+                } else {
+                    bookedEndRaw = bookedEndRaw.add(15, 'minutes');
+                }
+
+                if (!bookedStartRaw.isValid() || !bookedEndRaw.isValid()) {
+                    return;
+                }
+
+                const bookedStart = moment.max(bookedStartRaw, dayStart);
+                const bookedEnd = moment.min(bookedEndRaw, dayEnd);
+                if (bookedEnd.isAfter(bookedStart)) {
+                    explicitlyUnavailable.push({
+                        start: bookedStart,
+                        end: bookedEnd,
+                        reason: booked.reason || '',
+                        note: booked.note || ''
+                    });
+                }
+            });
+        });
+
+        if (!explicitlyUnavailable.length) {
+            return [];
+        }
+
+        explicitlyUnavailable.sort((a, b) => a.start.valueOf() - b.start.valueOf());
+
+        const mergedUnavailable = [];
+        explicitlyUnavailable.forEach(range => {
+            if (!mergedUnavailable.length) {
+                mergedUnavailable.push({
+                    start: range.start.clone(),
+                    end: range.end.clone(),
+                    reason: range.reason,
+                    note: range.note
+                });
+                return;
+            }
+            const last = mergedUnavailable[mergedUnavailable.length - 1];
+            if (range.start.isSameOrBefore(last.end)) {
+                if (range.end.isAfter(last.end)) {
+                    last.end = range.end.clone();
+                }
+                last.reason = last.reason || range.reason;
+                last.note = last.note || range.note;
+            } else {
+                mergedUnavailable.push({
+                    start: range.start.clone(),
+                    end: range.end.clone(),
+                    reason: range.reason,
+                    note: range.note
+                });
+            }
+        });
+
+        return mergedUnavailable.filter(range => range.end.isAfter(range.start));
+    },
+
+    markUnavailableSlots: async function (info) {
+        const calendar = cur_list?.calendar?.fullCalendar;
+        if (!calendar || typeof calendar.addEvent !== 'function') {
+            return;
+        }
+
+        const viewType = info?.view?.type || this.state.currentView;
+        const supportedViews = ['resourceTimeGridDay', 'resourceTimeGridWeek'];
+        if (!supportedViews.includes(viewType)) {
+            return;
+        }
+
+        const resources = Array.isArray(this.state.resources) ? this.state.resources : [];
+        if (!resources.length) {
+            return;
+        }
+
+        const viewStart = moment(info?.view?.currentStart);
+        const viewEnd = moment(info?.view?.currentEnd);
+        if (!viewStart.isValid() || !viewEnd.isValid()) {
+            return;
+        }
+
+        this.resetAvailabilityCache();
+        this.clearAvailabilityOverlays();
+        if (!this.state.availabilityCache) {
+            this.state.availabilityCache = {};
+        }
+
+        const backgroundEvents = [];
+        const fetchTasks = [];
+        const availabilityMap = {};
+
+        for (let day = viewStart.clone(); day.isBefore(viewEnd); day.add(1, 'day')) {
+            const dateStr = day.format('YYYY-MM-DD');
+            resources.forEach(resource => {
+                fetchTasks.push((async () => {
+                    const dayStart = moment(`${dateStr} ${CONFIG.SLOT_MIN_TIME}`, 'YYYY-MM-DD HH:mm:ss');
+                    const dayEnd = moment(`${dateStr} ${CONFIG.SLOT_MAX_TIME}`, 'YYYY-MM-DD HH:mm:ss');
+                    if (!dayStart.isValid() || !dayEnd.isValid() || !dayEnd.isAfter(dayStart)) {
+                        return;
+                    }
+                    try {
+                        const availability = await this.getAvailabilityData(resource.id, dateStr, { forceRefresh: true });
+                        const slotDetails = availability?.slot_details || [];
+                        const unavailableRanges = this.computeUnavailableRanges(slotDetails, dateStr, dayStart, dayEnd);
+
+                        if (!unavailableRanges.length) {
+                            return;
+                        }
+
+                        const mapKey = `${resource.id}__${dateStr}`;
+                        availabilityMap[mapKey] = availabilityMap[mapKey] || [];
+
+                        unavailableRanges.forEach(range => {
+                            const startIso = range.start.toISOString();
+                            const endIso = range.end.toISOString();
+
+                            availabilityMap[mapKey].push({
+                                start: startIso,
+                                end: endIso,
+                                reason: range.reason || '',
+                                note: range.note || ''
+                            });
+
+                            backgroundEvents.push({
+                                start: startIso,
+                                end: endIso,
+                                resourceId: resource.id,
+                                display: 'background',
+                                overlap: false,
+                                extendedProps: {
+                                    __availabilityOverlay: true,
+                                    reason: range.reason || '',
+                                    note: range.note || ''
+                                }
+                            });
+                        });
+                    } catch (error) {
+                        console.warn(`Failed to fetch availability for ${resource.id} on ${dateStr}`, error);
+                    }
+                })());
+            });
+        }
+
+        await Promise.all(fetchTasks);
+
+        this.state.unavailableByResourceDate = availabilityMap;
+
+        if (!backgroundEvents.length) {
+            return;
+        }
+
+        backgroundEvents.forEach(eventConfig => {
+            const extendedProps = Object.assign({ __availabilityOverlay: true }, eventConfig.extendedProps || {});
+            calendar.addEvent(Object.assign({}, eventConfig, {
+                extendedProps,
+                classNames: ['slot-unavailable-indicator']
+            }));
+        });
     },
 
     // Get cached resources
@@ -1183,42 +1593,223 @@ const appointmentActions = {
     },
 
     async openBillingInterface(appointmentId) {
-        const appointment = await frappe.db.get_doc('Patient Appointment', appointmentId);
+        const appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+
+        const isInsurance = (appt.custom_payment_type || '').toLowerCase().includes('insur');
 
         const dialog = new frappe.ui.Dialog({
-            title: `💳 Billing — ${appointment.patient_name}`,
+            title: `💳 ${__('Billing')} — ${appt.patient_name}`,
             size: 'extra-large',
-            primary_action_label: __('Generate Invoice'),
+            primary_action_label: __('Generate Invoices'),
             primary_action: async () => {
-                await generateAppointmentInvoice(appointment);
-                dialog.hide();
-                frappe.show_alert({ message: __('Invoice created successfully'), indicator: 'green' });
-                this.refreshCalendar();
+                try {
+                    await frappe.call({
+                        method: 'do_health.api.methods.create_invoices_for_appointment',
+                        args: { appointment_id: appt.name, submit_invoice: 0 },
+                        freeze: true,
+                        freeze_message: __('Creating invoice(s)...')
+                    });
+                    dialog.hide();
+                    frappe.show_alert({ message: __('Invoice(s) created successfully'), indicator: 'green' });
+                    appointmentActions.refreshCalendar();
+                } catch (e) {
+                    console.error(e);
+                }
             },
         });
 
         dialog.$body.html(`
-            <div class="billing-wrapper flex" style="gap: 20px; min-height: 500px;">
-                <div class="services-library w-1/2 bg-gray-50 p-3 rounded-xl overflow-y-auto border">
-                    <h5 class="font-semibold mb-3">${__('Available Services')}</h5>
-                    <div class="service-items grid grid-cols-2 gap-3" id="available-services"></div>
+        <div class="billing-ui grid" style="grid-template-columns: 1fr 1.2fr; gap:16px; min-height:520px;">
+            <!-- Add Item -->
+            <div class="bg-gray-50 rounded-xl border p-12" style="padding:16px;">
+                <div class="flex items-center justify-between">
+                    <h5 class="font-semibold m-0">${__('Add Item')}</h5>
                 </div>
-                <div class="selected-services w-1/2 p-3 rounded-xl border">
-                    <h5 class="font-semibold mb-3">${__('Selected Services')}</h5>
-                    <div id="selected-services" class="selected-items space-y-3"></div>
-                    <hr class="my-3" />
-                    <div class="billing-summary text-sm">
-                        <div class="flex justify-between"><span>${__('Patient Share')}:</span> <span id="patient-total">0</span></div>
-                        <div class="flex justify-between"><span>${__('Insurance Share')}:</span> <span id="insurance-total">0</span></div>
-                        <div class="flex justify-between font-bold border-t mt-2 pt-2"><span>${__('Total')}:</span> <span id="total-price">0</span></div>
+                <div class="mt-3">
+                    <div class="form-row" style="display:flex; gap:8px; align-items:center;">
+                        <div style="flex:1;" id="bill-item-link-wrapper"></div>
+                        <div style="width:110px; margin-top:10px;">
+                            <input type="number" id="bill-item-qty" class="form-control" min="1" step="1" value="1" />
+                        </div>
+                        <div style="margin-top:7px;">
+                            <button class="btn btn-primary" id="bill-add-item">${__('Add')}</button>
+                        </div>
                     </div>
                 </div>
             </div>
-        `);
 
-        await dialog.show();
-        await loadAvailableServices(appointment);
-        await renderSelectedServices(appointment);
+            <!-- Selected Items & Totals -->
+            <div class="rounded-xl border p-12" style="padding:16px;">
+                <div class="flex items-center justify-between">
+                    <h5 class="font-semibold m-0">${__('Appointment Items')}</h5>
+                    <span class="badge badge-${isInsurance ? 'info' : 'secondary'}">
+                        ${isInsurance ? __('Insurance') : __('Self Payment')}
+                    </span>
+                </div>
+
+                <div id="bill-items-table" class="table-responsive mt-3"></div>
+
+                <hr class="my-3"/>
+
+                <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                        <div class="text-sm text-muted mb-1">${__('Patient Share')}</div>
+                        <div id="patient-total" class="h4 m-0">0.00</div>
+                    </div>
+                    <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                        <div class="text-sm text-muted mb-1">${__('Insurance Share')}</div>
+                        <div id="insurance-total" class="h4 m-0">0.00</div>
+                    </div>
+                </div>
+
+                <div class="rounded-lg p-3 mt-3" style="border:2px dashed #e5e7eb;">
+                    <div class="text-sm text-muted mb-1">${__('Grand Total')}</div>
+                    <div id="grand-total" class="h4 m-0">0.00</div>
+                </div>
+            </div>
+
+            <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 16px; margin-top:16px;">
+                <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                    <div class="text-sm text-muted mb-1">${__('Patient Billing Status')}</div>
+                    <div id="patient-status" class="badge badge-secondary">Loading...</div>
+                </div>
+                <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                    <div class="text-sm text-muted mb-1">${__('Insurance Claim Status')}</div>
+                    <div id="insurance-status" class="badge badge-info">Loading...</div>
+                </div>
+            </div>
+        </div>
+    `);
+
+        dialog.show();
+
+        // --- wire up controls ---
+        const el = dialog.$wrapper.get(0);
+        const qtyInput = el.querySelector('#bill-item-qty');
+        const addBtn = el.querySelector('#bill-add-item');
+
+        // Create a proper Link field for Item
+        let chosenItemCode = null;
+        const itemLink = frappe.ui.form.make_control({
+            parent: el.querySelector('#bill-item-link-wrapper'),
+            df: {
+                fieldtype: 'Link',
+                fieldname: 'item_code',
+                label: __('Item'),
+                options: 'Item',
+                reqd: 1,
+                change: (val) => { chosenItemCode = val || null; }
+            },
+            render_input: true
+        });
+        itemLink.refresh();
+
+        addBtn.addEventListener('click', async () => {
+            const qty = cint(qtyInput.value || 1);
+            const item_code = chosenItemCode || itemLink.get_value();
+            if (!item_code) {
+                frappe.show_alert({ message: __('Pick an item first'), indicator: 'orange' });
+                return;
+            }
+            await addAppointmentItem(appt.name, item_code, qty);
+            // reset
+            itemLink.set_value('');
+            chosenItemCode = null;
+            qtyInput.value = '1';
+            await refreshAppointmentItemsUI(appt.name);
+        });
+
+        async function addAppointmentItem(appointment, item_code, qty) {
+            await frappe.call({
+                method: 'do_health.api.methods.add_item_to_appointment',
+                args: { appointment, item_code, qty },
+                freeze: true,
+                freeze_message: __('Adding item...')
+            });
+        }
+
+        async function removeAppointmentItem(rowname) {
+            await frappe.call({
+                method: 'do_health.api.methods.remove_item_from_appointment',
+                args: { rowname },
+                freeze: true,
+                freeze_message: __('Removing item...')
+            });
+        }
+
+        async function updateAppointmentItemQty(rowname, qty) {
+            await frappe.call({
+                method: 'do_health.api.methods.update_item_qty_in_appointment',
+                args: { rowname, qty },
+            });
+        }
+
+        async function refreshAppointmentItemsUI(appointment) {
+            const { message } = await frappe.call({
+                method: 'do_health.api.methods.get_appointment_items_snapshot',
+                args: { appointment_id: appointment }
+            });
+
+            const tblWrap = el.querySelector('#bill-items-table');
+            if (!message || !Array.isArray(message.rows)) {
+                tblWrap.innerHTML = '<div class="text-muted small">No items yet.</div>';
+                return;
+            }
+
+            tblWrap.innerHTML = `
+            <table class="table table-sm table-bordered">
+                <thead>
+                    <tr>
+                        <th style="width:32%;">${__('Item')}</th>
+                        <th style="width:10%;">${__('Qty')}</th>
+                        <th style="width:14%;">${__('Rate')}</th>
+                        <th style="width:14%;">${__('Patient')}</th>
+                        <th style="width:14%;">${__('Insurance')}</th>
+                        <th style="width:16%;">${__('Amount')}</th>
+                        <th style="width:8%;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${message.rows.map(r => `
+                        <tr data-row="${r.name}">
+                            <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
+                            <td><input type="number" min="1" step="1" class="form-control form-control-sm js-qty" value="${r.qty}"></td>
+                            <td>${format_currency(r.rate || 0, message.currency || 'BHD')}</td>
+                            <td>${format_currency(r.patient_share || 0, message.currency || 'BHD')}</td>
+                            <td>${format_currency(r.insurance_share || 0, message.currency || 'BHD')}</td>
+                            <td>${format_currency(r.amount || 0, message.currency || 'BHD')}</td>
+                            <td class="text-center">
+                                <button class="btn btn-xs btn-danger js-del">&times;</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+
+            el.querySelector('#patient-total').textContent = format_currency(message.totals.patient || 0, message.currency || 'BHD');
+            el.querySelector('#insurance-total').textContent = format_currency(message.totals.insurance || 0, message.currency || 'BHD');
+            el.querySelector('#grand-total').textContent = format_currency(message.totals.grand || 0, message.currency || 'BHD');
+
+            const apptDoc = await frappe.db.get_doc('Patient Appointment', appointment);
+            el.querySelector('#patient-status').textContent = apptDoc.custom_billing_status || 'Not Billed';
+            el.querySelector('#insurance-status').textContent = apptDoc.custom_insurance_status || 'Not Claimed';
+
+            tblWrap.querySelectorAll('tr[data-row]').forEach(tr => {
+                const rowname = tr.getAttribute('data-row');
+                tr.querySelector('.js-del').addEventListener('click', async () => {
+                    await removeAppointmentItem(rowname);
+                    await refreshAppointmentItemsUI(appt.name);
+                });
+                tr.querySelector('.js-qty').addEventListener('change', async (e) => {
+                    const q = cint(e.target.value || 1);
+                    await updateAppointmentItemQty(rowname, q);
+                    await refreshAppointmentItemsUI(appt.name);
+                });
+            });
+        }
+
+        await refreshAppointmentItemsUI(appt.name);
     },
 
     async pinPatientToSidebar(appointmentId, context = {}) {
@@ -1789,6 +2380,7 @@ let check_and_set_availability = function (event, is_new = false) {
                         "docstatus": 0,
                         "doctype": "Patient Appointment",
                         "name": event ? event.name : null,
+                        "duration": duration,
                     }
                 },
                 callback: (r) => {

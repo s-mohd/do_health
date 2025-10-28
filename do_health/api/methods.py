@@ -3,7 +3,7 @@ from frappe import _
 import datetime
 import frappe.query_builder
 import frappe.query_builder.functions
-from frappe.utils import add_to_date, get_datetime, get_datetime_str, flt, format_date, get_link_to_form, get_time, getdate
+from frappe.utils import nowdate, add_to_date, get_datetime, get_datetime_str, flt, format_date, get_link_to_form, get_time, getdate
 from frappe.utils.file_manager import save_file
 from frappe.desk.form.save import cancel
 # from healthcare.healthcare.doctype.patient_appointment.patient_appointment import update_status
@@ -13,11 +13,6 @@ import base64
 import re
 from collections import defaultdict
 import json
-
-from healthcare.healthcare.doctype.patient_appointment.patient_appointment import (
-	check_employee_wise_availability,
-	get_available_slots
-)
 
 # App Resources
 @frappe.whitelist()
@@ -1131,23 +1126,314 @@ def get_availability_data(date, practitioner, appointment):
 
 	check_employee_wise_availability(date, practitioner_doc)
 
+	available_slotes = []
+	if isinstance(appointment, str):
+		appointment = frappe.get_doc(json.loads(appointment))
+
+	if frappe.db.exists(
+		"Practitioner Availability",
+		{
+			"type": "Available",
+			"scope": practitioner_doc.name,
+			"status": "Active",
+			"start_date": ["<=", date],
+			"end_date": [">=", date],
+			"docstatus": 1,
+		},
+	):
+		available_slotes = get_availability_slots(practitioner_doc, date, appointment.duration)
+
 	if practitioner_doc.practitioner_schedules:
 		slot_details = get_available_slots(practitioner_doc, date)
-	else:
+	elif not len(available_slotes):
 		frappe.throw(
 			_(
-				"{0} does not have a Healthcare Practitioner Schedule. Add it in Healthcare Practitioner master"
+				"{0} does not have a Healthcare Practitioner Schedule / Availability. Add it in Healthcare Practitioner master / Practitioner Availability"
 			).format(practitioner),
 			title=_("Practitioner Schedule Not Found"),
 		)
 
+	if available_slotes and len(available_slotes):
+		slot_details += available_slotes
 	if not slot_details:
 		# TODO: return available slots in nearby dates
 		frappe.throw(
 			_("Healthcare Practitioner not available on {0}").format(weekday), title=_("Not Available")
 		)
 
-	return {"slot_details": slot_details, "fee_validity": 'Disabled'}
+	fee_validity = "Disabled"
+	free_follow_ups = False
+
+	settings_enabled = frappe.db.get_single_value("Healthcare Settings", "enable_free_follow_ups")
+	pract_enabled = frappe.db.get_value(
+		"Healthcare Practitioner", practitioner, "enable_free_follow_ups"
+	)
+
+	if practitioner and (pract_enabled or settings_enabled):
+		free_follow_ups = True
+
+	if free_follow_ups:
+		fee_validity = check_fee_validity(appointment, date, practitioner)
+		if not fee_validity and not appointment.get("__islocal"):
+			validity_details = get_fee_validity(appointment.get("name"), date, ignore_status=True)
+			if validity_details:
+				fee_validity = validity_details[0]
+
+	if appointment.invoiced:
+		fee_validity = "Disabled"
+
+	return {"slot_details": slot_details, "fee_validity": fee_validity}
+
+
+def check_employee_wise_availability(date, practitioner_doc):
+	employee = None
+	if practitioner_doc.employee:
+		employee = practitioner_doc.employee
+	elif practitioner_doc.user_id:
+		employee = frappe.db.get_value("Employee", {"user_id": practitioner_doc.user_id}, "name")
+
+	if employee:
+		# check holiday
+		if is_holiday(employee, date):
+			frappe.throw(_("{0} is a holiday".format(date)), title=_("Not Available"))
+
+		# check leave status
+		if "hrms" in frappe.get_installed_apps():
+			leave_record = frappe.db.sql(
+				"""select half_day from `tabLeave Application`
+				where employee = %s and %s between from_date and to_date
+				and docstatus = 1""",
+				(employee, date),
+				as_dict=True,
+			)
+			if leave_record:
+				if leave_record[0].half_day:
+					frappe.throw(
+						_("{0} is on a Half day Leave on {1}").format(practitioner_doc.name, date),
+						title=_("Not Available"),
+					)
+				else:
+					frappe.throw(
+						_("{0} is on Leave on {1}").format(practitioner_doc.name, date), title=_("Not Available")
+					)
+
+
+def get_available_slots(practitioner_doc, date):
+	available_slots = slot_details = []
+	weekday = date.strftime("%A")
+	practitioner = practitioner_doc.name
+
+	for schedule_entry in practitioner_doc.practitioner_schedules:
+		validate_practitioner_schedules(schedule_entry, practitioner)
+		practitioner_schedule = frappe.get_doc("Practitioner Schedule", schedule_entry.schedule)
+
+		if practitioner_schedule and not practitioner_schedule.disabled:
+			available_slots = []
+			for time_slot in practitioner_schedule.time_slots:
+				if weekday == time_slot.day:
+					available_slots.append(time_slot)
+
+			if available_slots:
+				appointments = []
+				allow_overlap = 0
+				service_unit_capacity = 0
+				# fetch all appointments to practitioner by service unit
+				filters = {
+					"practitioner": practitioner,
+					"service_unit": schedule_entry.service_unit,
+					"appointment_date": date,
+					"status": ["not in", ["Cancelled"]],
+				}
+
+				if schedule_entry.service_unit:
+					slot_name = f"{schedule_entry.schedule}"
+					allow_overlap, service_unit_capacity = frappe.get_value(
+						"Healthcare Service Unit",
+						schedule_entry.service_unit,
+						["overlap_appointments", "service_unit_capacity"],
+					)
+					if not allow_overlap:
+						# fetch all appointments to service unit
+						filters.pop("practitioner")
+				else:
+					slot_name = schedule_entry.schedule
+					# fetch all appointments to practitioner without service unit
+					filters["practitioner"] = practitioner
+					filters.pop("service_unit")
+
+				appointments = frappe.get_all(
+					"Patient Appointment",
+					filters=filters,
+					fields=["name", "appointment_time", "duration", "status", "appointment_date"],
+				)
+
+				practitioner_availability = get_practitioner_unavailability(
+					date, practitioner, practitioner_doc.department, schedule_entry.service_unit
+				)
+				appointments.extend(
+					practitioner_availability
+				)  # consider practitioner_availability as booked appointments
+
+				slot_details.append(
+					{
+						"slot_name": slot_name,
+						"service_unit": schedule_entry.service_unit,
+						"avail_slot": available_slots,
+						"appointments": appointments,
+						"allow_overlap": allow_overlap,
+						"service_unit_capacity": service_unit_capacity,
+						"tele_conf": practitioner_schedule.allow_video_conferencing,
+					}
+				)
+	return slot_details
+
+
+def get_availability_slots(practitioner_doc, date, duration):
+	availability_details = frappe.db.get_all(
+		"Practitioner Availability",
+		filters={
+			"type": "Available",
+			"scope": practitioner_doc.name,
+			"status": "Active",
+			"start_date": ["<=", date],
+			"end_date": [">=", date],
+			"docstatus": 1,
+		},
+		pluck="name",
+	)
+
+	if not len(availability_details):
+		return []
+
+	available_slotes = []
+	for availability in availability_details:
+		data = build_availability_data(availability, duration, date, practitioner_doc)
+		if data:
+			available_slotes.append(data)
+
+	return available_slotes
+
+
+def build_availability_data(availability, duration, date, practitioner_doc):
+	available_slots = []
+	availability_doc = frappe.get_doc("Practitioner Availability", availability)
+
+	allow_overlap = service_unit_capacity = 0
+	if availability_doc.service_unit:
+		allow_overlap, service_unit_capacity = frappe.db.get_value(
+			"Healthcare Service Unit",
+			availability_doc.service_unit,
+			["allow_appointments", "service_unit_capacity"],
+		)
+
+	weekday = date.strftime("%A").lower()
+	if availability_doc.repeat == "Weekly" and not getattr(availability_doc, weekday, 0):
+		return {}
+	elif (
+		availability_doc.repeat == "Monthly" and getdate(date).day != availability_doc.start_date.day
+	):
+		return {}
+	elif availability_doc.repeat == "Never" and not (
+		getdate(date) >= availability_doc.start_date and getdate(date) <= availability_doc.end_date
+	):
+		return {}
+
+	start_time = (
+		datetime.datetime.combine(date, datetime.time()) + availability_doc.start_time
+	).time()
+	end_time = (datetime.datetime.combine(date, datetime.time()) + availability_doc.end_time).time()
+
+	current = datetime.datetime.combine(date, start_time)
+	end = datetime.datetime.combine(date, end_time)
+
+	while current + datetime.timedelta(minutes=duration) <= end:
+		slot_start = current.time().strftime("%H:%M:%S")
+		slot_end = (
+			(current + datetime.timedelta(minutes=duration)).time().strftime("%H:%M:%S")
+		)
+		available_slots.append({"from_time": slot_start, "to_time": slot_end})
+		current += datetime.timedelta(minutes=duration)
+
+	filters = {
+		"practitioner": practitioner_doc.name,
+		"appointment_date": date,
+		"status": ["not in", ["Cancelled"]],
+	}
+	appointments = frappe.get_all(
+		"Patient Appointment",
+		filters=filters,
+		fields=["name", "appointment_time", "duration", "status", "appointment_date"],
+	)
+
+	practitioner_availability = get_practitioner_unavailability(
+		date,
+		practitioner_doc.name,
+		practitioner_doc.department,
+	)
+	appointments.extend(practitioner_availability)
+
+	return (
+		{
+			"slot_name": "Practitioner Availability",
+			"display": availability_doc.display,
+			"service_unit": availability_doc.service_unit or None,
+			"avail_slot": available_slots,
+			"appointments": appointments,
+			"allow_overlap": allow_overlap or 0,
+			"service_unit_capacity": service_unit_capacity or 0,
+			"tele_conf": 0,
+		}
+		if available_slots
+		else None
+	)
+
+
+def get_practitioner_unavailability(date, practitioner=None, department=None, service_unit=None):
+	scopes = (practitioner, department, service_unit)
+	date = getdate(date)
+
+	return frappe.get_all(
+		"Practitioner Availability",
+		fields=[
+			"name",
+			"start_date as appointment_date",
+			"start_time as appointment_time",
+			"duration",
+			"type",
+			"reason",
+			"note",
+		],
+		filters={
+			"type": "Unavailable",
+			"docstatus": 1,
+			"start_date": ("<=", date),
+			"end_date": (">=", date),
+			"scope": ["in", scopes],
+		},
+		order_by="start_time",
+	)
+
+
+def validate_practitioner_schedules(schedule_entry, practitioner):
+	if schedule_entry.schedule:
+		if not schedule_entry.service_unit:
+			frappe.throw(
+				_(
+					"Practitioner {0} does not have a Service Unit set against the Practitioner Schedule {1}."
+				).format(
+					get_link_to_form("Healthcare Practitioner", practitioner),
+					frappe.bold(schedule_entry.schedule),
+				),
+				title=_("Service Unit Not Found"),
+			)
+
+	else:
+		frappe.throw(
+			_("Practitioner {0} does not have a Practitioner Schedule assigned.").format(
+				get_link_to_form("Healthcare Practitioner", practitioner)
+			),
+			title=_("Practitioner Schedule Not Found"),
+		)
 
 @frappe.whitelist()
 def get_waiting_list():
@@ -1177,185 +1463,249 @@ def get_waiting_list():
 
     """, as_dict=True)
 
+@frappe.whitelist()
+def add_item_to_appointment(appointment, item_code, qty: int = 1):
+    appt = frappe.get_doc("Patient Appointment", appointment)
+    row = appt.append("custom_billing_items", {
+        "item_code": item_code,
+        "qty": flt(qty or 1),
+    })
+    appt.save(ignore_permissions=True)
+    frappe.db.commit()
+    return row.name
 
 @frappe.whitelist()
-def determine_service_price_for_service(appt, service_name):
-	"""
-	Like determine_service_price(), but handles one service for a given appointment.
-	"""
-	service = frappe.get_doc("Healthcare Service Template", service_name)
-
-	default_self_price = flt(service.get("base_price", 0))
-	default_insurance_price = flt(service.get("default_insurance_price", 0))
-	currency = service.get("currency") or frappe.db.get_default("currency") or "BHD"
-
-	practitioner_price = None
-	price_source = "service_template"
-
-	if appt.practitioner:
-		practitioner = frappe.get_doc("Healthcare Practitioner", appt.practitioner)
-		for r in practitioner.get("custom_service_prices") or []:
-			if r.get("service_name") == service_name:
-				if appt.custom_payment_type and appt.custom_payment_type.lower().startswith("insur"):
-					practitioner_price = flt(r.get("insurance_price", 0))
-				else:
-					practitioner_price = flt(r.get("self_price", 0))
-				price_source = "practitioner"
-				break
-
-	if appt.custom_payment_type and appt.custom_payment_type.lower().startswith("insur"):
-		price = practitioner_price or default_insurance_price or default_self_price
-	else:
-		price = practitioner_price or default_self_price
-
-	return {"price": flt(price, 2), "price_source": price_source, "currency": currency}
-
-def make_invoice(customer, items, posting_date=None, company=None, currency=None, patient=None):
-	"""
-	Create a Sales Invoice (Draft) with provided item lines.
-	'items' should be a list of dicts in the form:
-		[{ "item_code": "ITEM-001", "qty": 1, "rate": 25.0, "description": "...", "income_account": "...", "cost_center": "..." }, ...]
-
-	Returns inserted Sales Invoice doc.
-	"""
-	if not customer:
-		frappe.throw("customer required for invoice")
-
-	inv = frappe.new_doc("Sales Invoice")
-	inv.customer = customer
-
-	if posting_date:
-		inv.posting_date = posting_date
-	else:
-		inv.posting_date = nowdate()
-
-	if company:
-		inv.company = company
-
-	if currency:
-		inv.currency = currency
-
-	if patient:
-		inv.patient = patient
-
-	for it in items:
-		row = {
-			"item_code": it.get("item_code"),
-			"qty": flt(it.get("qty", 1)),
-			"rate": flt(it.get("rate", 0.0)),
-			"description": it.get("description") or "",
-		}
-		# optionally include account/cost center if supplied
-		if it.get("income_account"):
-			row["income_account"] = it.get("income_account")
-		if it.get("cost_center"):
-			row["cost_center"] = it.get("cost_center")
-
-		inv.append("items", row)
-
-	# Insert as draft (docstatus = 0)
-	inv.insert(ignore_permissions=True)
-	# Do not submit; leave as draft for review/payment
-	return inv
-
+def remove_item_from_appointment(rowname):
+    # rowname is the child row name in Appointment Billing Items table
+    child = frappe.get_doc("Appointment Billing Items", rowname)
+    parent = child.parent
+    child.delete()
+    frappe.db.commit()
+    return parent
 
 @frappe.whitelist()
-def create_appointment_invoices_multi_service(appointment_id, submit_invoice=False):
-	"""
-	Creates invoice(s) for a Patient Appointment that has multiple service templates.
+def update_item_qty_in_appointment(rowname, qty: int):
+    child = frappe.get_doc("Appointment Billing Items", rowname)
+    child.qty = flt(qty or 1)
+    child.save(ignore_permissions=True)
+    frappe.db.commit()
+    return child.parent
 
-	Supports:
-		- Practitioner-specific prices
-		- Self payment or Insurance split (coverage % + deductible)
-		- Generates 1 invoice (Self) or 2 invoices (Patient + Insurance)
-	"""
-	appt = frappe.get_doc("Patient Appointment", appointment_id)
-	if not appt.custom_services:
-		frappe.throw("Please select at least one service for this appointment.")
+def _resolve_price_list(appt, patient_doc):
+    payment_type = (appt.get("custom_payment_type") or "").lower()
+    if "insur" in payment_type:
+        sub = frappe.get_value(
+            "Healthcare Insurance Subscription",
+            {"patient": appt.patient, "docstatus": 1, "disabled": 0},
+            ["insurance_company"],
+            as_dict=True
+        )
+        if sub and sub.insurance_company:
+            price_list = frappe.db.get_value("Healthcare Insurance Company", sub.insurance_company, "price_list")
+            if price_list:
+                return price_list, True
 
-	services = appt.service_templates
+    # fallback: default selling price list
+    return frappe.db.get_single_value("Selling Settings", "selling_price_list"), False
 
-	created = {"patient_invoice": None, "insurance_invoice": None}
+def _get_item_rate(item_code, price_list, currency=None):
+    # Pull rate from Item Price
+    rate = frappe.db.get_value("Item Price",
+        {"item_code": item_code, "price_list": price_list},
+        "price_list_rate")
+    if not rate:
+        rate = 0
+    if currency:
+        # you can add currency conversion here if needed
+        pass
+    return flt(rate, 2)
 
-	company = appt.company or frappe.get_single("Global Defaults").default_company
-	currency = frappe.db.get_default("currency") or "BHD"
+def _coverage_split(patient_name, item_code, unit_rate, qty):
+    """Split total between patient and insurance using active Healthcare Insurance Subscription."""
+    total = flt(unit_rate) * flt(qty)
 
-	patient_items = []
-	insurance_items = []
+    # Defaults (no subscription): patient pays all
+    patient_share = total
+    insurance_share = 0
 
-	for service_name in services.service:
-		if not frappe.db.exists("Healthcare Service Template", service_name):
-			frappe.log_error(f"Service template not found: {service_name}", "Appointment Billing")
-			continue
+    sub = frappe.get_value(
+        "Healthcare Insurance Subscription",
+        {"patient": patient_name, "docstatus": 1, "disabled": 0},
+        ["name", "insurance_company", "copay_type", "copay_value"],
+        as_dict=True
+    )
 
-		service = frappe.get_doc("Healthcare Service Template", service_name)
-		patient = frappe.get_doc("Patient", appt.patient)
-		item_code = service.get("item")
-		if not item_code:
-			frappe.throw(f"Service template {service_name} must have an item_code")
+    if sub:
+        copay_type = (sub.get("copay_type") or "").strip()
+        copay_value = flt(sub.get("copay_value") or 0)
 
-		# Determine price for each service
-		price_info = determine_service_price_for_service(appt, service_name)
-		price = flt(price_info.get("price", 0.0))
-		currency = price_info.get("currency") or currency
+        if copay_type == "Amount":
+            patient_share = min(copay_value, total)
+            insurance_share = max(total - patient_share, 0)
+        elif copay_type == "Percent":
+            pct = max(0, min(copay_value, 100))
+            patient_share = flt(total * (pct / 100.0), 2)
+            insurance_share = flt(total - patient_share, 2)
+        else:
+            # No copay → insurance covers all
+            patient_share = 0
+            insurance_share = total
 
-		if (appt.custom_payment_type or "").lower().startswith("insur"):
-			if not patient.custom_active:
-				frappe.throw("Appointment payment_type is Insurance but patient insurance is inactive")
-			if not patient.custom_insurance_company_name:
-				frappe.throw("Appointment payment_type is Insurance but patient has no insurance_company set")
+    return flt(patient_share, 2), flt(insurance_share, 2)
 
-			if patient.custom_copay_type == 'Amount':
-				insurance_share = flt(price - (patient.custom_copay_amount or 0))
-				patient_share = flt(patient.custom_copay_amount or 0)
-			elif patient.custom_copay_type == 'Percent':
-				insurance_share = flt(price * ((100 - patient.custom_copay_percent) / 100.0))
-				patient_share = flt(price * (patient.custom_copay_percent / 100.0))
+@frappe.whitelist()
+def get_appointment_items_snapshot(appointment_id):
+    """Return a snapshot: rows with computed rate, shares, and total blocks."""
+    appt = frappe.get_doc("Patient Appointment", appointment_id)
+    patient = frappe.get_doc("Patient", appt.patient)
+    currency = frappe.db.get_default("currency") or "BHD"
 
-			if patient_share > 0:
-				patient_items.append({
-					"item_code": item_code,
-					"qty": 1,
-					"rate": patient_share,
-					"description": f"{service.service_name} (Co-pay / Deductible)"
-				})
+    price_list, is_insurance = _resolve_price_list(appt, patient)
 
-			if insurance_share > 0:
-				insurance_items.append({
-					"item_code": item_code,
-					"qty": 1,
-					"rate": insurance_share,
-					"description": f"{service.service_name} (Insurance Coverage - {flt(100 - patient.custom_copay_percent)}%)"
-				})
-		else:
-			# Self payment
-			patient_items.append({
-				"item_code": item_code,
-				"qty": 1,
-				"rate": price,
-				"description": service.service_name
-			})
+    rows = []
+    totals_patient = 0.0
+    totals_insurance = 0.0
 
-	# --- Create Invoices ---
-	if patient_items:
-		inv = make_invoice(patient.customer, patient_items, posting_date=nowdate(), company=company, currency=currency, patient=appt.patient)
-		created["patient_invoice"] = inv.name
-		appt.db_set("sales_invoice_patient", inv.name)
-		if submit_invoice:
-			inv.submit()
+    for r in appt.get("custom_billing_items") or []:
+        unit_rate = _get_item_rate(r.item_code, price_list, currency)
+        qty = flt(r.qty or 1)
 
-	if insurance_items:
-		inv_ins = make_invoice(patient.custom_insurance_company_name, insurance_items, posting_date=nowdate(), company=company, currency=currency, patient=appt.patient)
-		created["insurance_invoice"] = inv_ins.name
-		appt.db_set("sales_invoice_insurance", inv_ins.name)
+        if is_insurance:
+            patient_share, insurance_share = _coverage_split(patient.name, r.item_code, unit_rate, qty)
+        else:
+            patient_share = unit_rate * qty
+            insurance_share = 0.0
 
-	# Set billing status
-	if insurance_items and patient_items:
-		appt.db_set("billing_status", "Partially Billed")
-	elif insurance_items:
-		appt.db_set("billing_status", "Insurance Billed")
-	elif patient_items:
-		appt.db_set("billing_status", "Fully Billed")
+        rows.append({
+            "name": r.name,
+            "item_code": r.item_code,
+            "item_name": r.item_name or frappe.db.get_value("Item", r.item_code, "item_name"),
+            "qty": qty,
+            "rate": unit_rate,
+            "patient_share": patient_share,
+            "insurance_share": insurance_share,
+            "amount": flt(patient_share + insurance_share, 2),
+        })
+        totals_patient += patient_share
+        totals_insurance += insurance_share
 
-	frappe.db.commit()
-	return created
+    return {
+        "rows": rows,
+        "currency": currency,
+        "totals": {
+            "patient": flt(totals_patient, 2),
+            "insurance": flt(totals_insurance, 2),
+            "grand": flt(totals_patient + totals_insurance, 2),
+        }
+    }
+
+def _make_invoice(customer, items, posting_date=None, company=None, currency=None, patient=None):
+    inv = frappe.new_doc("Sales Invoice")
+    inv.customer = customer
+    inv.posting_date = posting_date or nowdate()
+    if company: inv.company = company
+    if currency: inv.currency = currency
+    if patient: inv.patient = patient
+
+    for it in items:
+        inv.append("items", {
+            "item_code": it["item_code"],
+            "qty": flt(it.get("qty", 1)),
+            "rate": flt(it.get("rate", 0)),
+            "description": it.get("description") or "",
+        })
+
+    inv.insert(ignore_permissions=True)
+    return inv
+
+def _update_patient_billing_status(appt, patient_invoice=None):
+    if not patient_invoice or not frappe.db.exists("Sales Invoice", patient_invoice):
+        appt.db_set("custom_billing_status", "Not Billed")
+        return
+
+    inv = frappe.get_doc("Sales Invoice", patient_invoice)
+
+    if inv.docstatus == 2:
+        appt.db_set("custom_billing_status", "Cancelled")
+    elif inv.docstatus == 1 and inv.outstanding_amount == 0:
+        appt.db_set("custom_billing_status", "Paid")
+    elif inv.docstatus == 1 and 0 < inv.outstanding_amount < inv.grand_total:
+        appt.db_set("custom_billing_status", "Partially Paid")
+    elif inv.docstatus == 1:
+        appt.db_set("custom_billing_status", "Not Paid")
+    else:
+        appt.db_set("custom_billing_status", "Not Billed")
+
+@frappe.whitelist()
+def create_invoices_for_appointment(appointment_id, submit_invoice: int = 0):
+    """Two invoices model (Patient + Insurance)."""
+    appt = frappe.get_doc("Patient Appointment", appointment_id)
+    if not appt.get("custom_billing_items"):
+        frappe.throw("Please add at least one item to bill.")
+
+    patient = frappe.get_doc("Patient", appt.patient)
+    company = appt.company or frappe.get_single("Global Defaults").default_company
+    currency = frappe.db.get_default("currency") or "BHD"
+
+    price_list, is_insurance = _resolve_price_list(appt, patient)
+
+    patient_items, insurance_items = [], []
+
+    for r in appt.custom_billing_items:
+        qty = flt(r.qty or 1)
+        unit_rate = _get_item_rate(r.item_code, price_list, currency)
+
+        if is_insurance:
+            patient_share, insurance_share = _coverage_split(patient.name, r.item_code, unit_rate, qty)
+            if patient_share > 0:
+                patient_items.append({"item_code": r.item_code, "qty": 1, "rate": flt(patient_share, 2)})
+            if insurance_share > 0:
+                insurance_items.append({"item_code": r.item_code, "qty": 1, "rate": flt(insurance_share, 2)})
+        else:
+            patient_items.append({"item_code": r.item_code, "qty": qty, "rate": unit_rate})
+
+    created = {"patient_invoice": None, "insurance_invoice": None}
+
+    # Patient invoice
+    if patient_items:
+        cust = frappe.db.get_value("Patient", appt.patient, "customer") or frappe.throw("Patient is not linked to a Customer.")
+        inv = _make_invoice(cust, patient_items, company=company, currency=currency, patient=appt.patient)
+        created["patient_invoice"] = inv.name
+        appt.db_set("ref_sales_invoice", inv.name)
+        if submit_invoice: inv.submit()
+
+    # Insurance invoice
+    if insurance_items:
+        # resolve insurance customer
+        ins_cust = None
+        sub = frappe.db.get_value("Healthcare Insurance Subscription",
+                                  {"patient": appt.patient, "docstatus": 1, "disabled": 0},
+                                  ["insurance_company"], as_dict=True)
+        if sub and sub.insurance_company:
+            ins_cust = frappe.db.get_value("Healthcare Insurance Company", sub.insurance_company, "customer")
+        if not ins_cust:
+            frappe.throw("Active insurance subscription found but Insurance Company is missing a linked Customer.")
+
+        inv_ins = _make_invoice(ins_cust, insurance_items, company=company, currency=currency, patient=appt.patient)
+        created["insurance_invoice"] = inv_ins.name
+        appt.db_set("custom_insurance_sales_invoice", inv_ins.name)
+        if submit_invoice: inv_ins.submit()
+
+    # Billing status
+    _update_patient_billing_status(appt, created.get("patient_invoice"))
+
+    frappe.db.commit()
+    return created
+
+def sync_patient_billing_status(doc, method):
+    """Auto-sync appointment billing_status whenever a Sales Invoice changes."""
+    if not doc.patient:
+        return
+
+    # find linked appointment(s)
+    appts = frappe.get_all("Patient Appointment",
+        filters={"ref_sales_invoice": doc.name},
+        pluck="name")
+    for appt_name in appts:
+        appt = frappe.get_doc("Patient Appointment", appt_name)
+        _update_patient_billing_status(appt, doc.name)
