@@ -205,6 +205,7 @@ doc_events = {
         "on_submit": "do_health.api.events.medication_request_update"
     },
     "Sales Invoice": {
+        "on_update": "do_health.api.methods.sync_patient_billing_status",
         "on_submit": "do_health.api.methods.sync_patient_billing_status",
         "on_cancel": "do_health.api.methods.sync_patient_billing_status",
         "on_update_after_submit": "do_health.api.methods.sync_patient_billing_status",
