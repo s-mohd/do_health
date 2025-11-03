@@ -1,0 +1,62 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:reason",
+ "creation": "2025-11-02 12:57:40.376348",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "reason",
+  "medical_department",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "reason",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Reason",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "medical_department",
+   "fieldtype": "Link",
+   "label": "Medical Department",
+   "options": "Medical Department"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-11-03 12:40:50.257402",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Visit Reason",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

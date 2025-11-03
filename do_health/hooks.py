@@ -6,7 +6,7 @@ app_publisher = "Sayed Mohamed"
 app_description = "an extention for the frappe healthcare app"
 app_email = "sayed10998@gmail.com"
 app_license = "mit"
-app_version = "1.0.0"
+app_version = "1.0.5"
 
 # Apps
 # ------------------
@@ -209,7 +209,11 @@ doc_events = {
         "on_submit": "do_health.api.methods.sync_patient_billing_status",
         "on_cancel": "do_health.api.methods.sync_patient_billing_status",
         "on_update_after_submit": "do_health.api.methods.sync_patient_billing_status",
-    }
+    },
+    "Insurance Claim": {
+        "on_update": "do_health.api.methods.sync_insurance_claim_status",
+        "on_submit": "do_health.api.methods.sync_insurance_claim_status",
+    },
 }
 
 # Scheduled Tasks

@@ -3,7 +3,7 @@ from frappe import _
 import datetime
 import frappe.query_builder
 import frappe.query_builder.functions
-from frappe.utils import nowdate, add_to_date, get_datetime, get_datetime_str, flt, format_date, get_link_to_form, get_time, getdate
+from frappe.utils import nowdate, add_to_date, get_datetime, get_datetime_str, flt, format_date, format_datetime, fmt_money, get_link_to_form, get_time, getdate, cint
 from frappe.utils.file_manager import save_file
 from frappe.desk.form.save import cancel
 # from healthcare.healthcare.doctype.patient_appointment.patient_appointment import update_status
@@ -13,6 +13,16 @@ import base64
 import re
 from collections import defaultdict
 import json
+from healthcare.healthcare.doctype.patient_insurance_policy.patient_insurance_policy import (
+	get_insurance_price_lists,
+	is_insurance_policy_valid,
+)
+from healthcare.healthcare.doctype.item_insurance_eligibility.item_insurance_eligibility import (
+	get_insurance_eligibility,
+)
+from healthcare.healthcare.doctype.patient_insurance_coverage.patient_insurance_coverage import (
+	make_insurance_coverage,
+)
 
 # App Resources
 @frappe.whitelist()
@@ -146,6 +156,228 @@ def get_item_taxes(item):
 	for template in item_taxes:
 		taxes.append(frappe.get_all('Item Tax Template Detail', filters={'parent': template}, fields=['tax_type', 'tax_rate']))
 	return taxes
+
+@frappe.whitelist()
+def get_visit_log(appointment_id):
+	if not appointment_id:
+		frappe.throw(_('Patient Appointment is required'))
+
+	appointment = frappe.get_doc('Patient Appointment', appointment_id)
+	entries = []
+	financial_totals = {}
+
+	def get_user_display(user):
+		if not user:
+			return None
+		full_name = frappe.db.get_value('User', user, 'full_name')
+		return full_name or user
+
+	def add_entry(entry_type, timestamp, title, description=None, *, badge=None, doc=None, reference=None, user=None, extra=None, tag=None):
+		if not timestamp:
+			timestamp = appointment.creation
+
+		datetime_value = get_datetime(timestamp)
+		entry = frappe._dict({
+			"type": entry_type,
+			"_sort_ts": datetime_value,
+			"timestamp": get_datetime_str(datetime_value),
+			"date": format_date(datetime_value),
+			"time": format_datetime(datetime_value, "HH:mm"),
+			"title": title,
+		})
+
+		if description:
+			entry["description"] = description
+		if badge:
+			entry["badge"] = badge
+		if doc:
+			entry["doc"] = doc
+		if reference:
+			entry["reference"] = reference
+		if extra:
+			entry["extra"] = extra
+		if tag:
+			entry["tag"] = tag
+		if user:
+			entry["user"] = get_user_display(user)
+
+		entries.append(entry)
+
+	# Status timeline
+	status_logs = frappe.get_all(
+		'Appointment Time Logs',
+		filters={'parent': appointment_id},
+		fields=['status', 'time', 'owner', 'modified_by', 'modified', 'creation'],
+		order_by='time asc, creation asc'
+	)
+
+	for log in status_logs:
+		user_id = log.modified_by or log.owner
+		add_entry(
+			'status',
+			log.time or log.modified or log.creation,
+			_('Status updated to {0}').format(log.status),
+			badge=log.status,
+			user=user_id
+		)
+
+	if not status_logs:
+		user_id = appointment.modified_by or appointment.owner
+		current_status = appointment.get('custom_visit_status') or appointment.status or _('Unknown')
+		add_entry(
+			'status',
+			appointment.modified or appointment.creation,
+			_('Current status: {0}').format(current_status),
+			badge=current_status,
+			user=user_id
+		)
+
+	# Billing & payments timeline
+	invoice_context = {}
+	if appointment.ref_sales_invoice:
+		invoice_context[appointment.ref_sales_invoice] = {
+			'label': _('Patient Invoice'),
+			'kind': 'patient'
+		}
+	if appointment.custom_insurance_sales_invoice:
+		invoice_context.setdefault(appointment.custom_insurance_sales_invoice, {
+			'label': _('Insurance Invoice'),
+			'kind': 'insurance'
+		})
+
+	invoice_names = list(invoice_context.keys())
+	invoice_map = {}
+
+	if invoice_names:
+		invoice_docs = frappe.get_all(
+			'Sales Invoice',
+			filters={'name': ('in', invoice_names)},
+			fields=[
+				'name', 'posting_date', 'posting_time', 'status', 'grand_total',
+				'outstanding_amount', 'paid_amount', 'currency', 'customer',
+				'docstatus', 'owner', 'creation', 'modified'
+			]
+		)
+
+		for invoice in invoice_docs:
+			invoice = frappe._dict(invoice)
+			invoice_map[invoice.name] = invoice
+			context = invoice_context.get(invoice.name, {})
+			label = context.get('label') or _('Invoice')
+
+			if invoice.posting_date:
+				posting_time = invoice.posting_time or '00:00:00'
+				timestamp_candidate = f"{invoice.posting_date} {posting_time}"
+			else:
+				timestamp_candidate = invoice.creation
+
+			amount_label = fmt_money(invoice.grand_total or 0, currency=invoice.currency)
+			description_parts = [_('Total {0}').format(amount_label)]
+			if flt(invoice.paid_amount):
+				description_parts.append(_('Paid {0}').format(fmt_money(invoice.paid_amount, currency=invoice.currency)))
+			if flt(invoice.outstanding_amount):
+				description_parts.append(_('Outstanding {0}').format(fmt_money(invoice.outstanding_amount, currency=invoice.currency)))
+
+			extra = []
+			# if invoice.customer:
+			# 	extra.append({'label': _('Customer'), 'value': invoice.customer})
+
+			add_entry(
+				'billing',
+				timestamp_candidate,
+				_('{0} {1}').format(label, invoice.name),
+				description=' | '.join(description_parts),
+				badge=invoice.status,
+				doc={'doctype': 'Sales Invoice', 'name': invoice.name, 'label': invoice.name},
+				user=invoice.owner,
+				extra=extra,
+				tag=label
+			)
+
+			totals = financial_totals.setdefault(
+				invoice.currency or '',
+				{'currency': invoice.currency, 'total_billed': 0.0, 'total_paid': 0.0, 'total_outstanding': 0.0}
+			)
+			totals['total_billed'] += flt(invoice.grand_total or 0)
+			totals['total_paid'] += flt(invoice.paid_amount or 0)
+			totals['total_outstanding'] += flt(invoice.outstanding_amount or 0)
+
+		payment_refs = frappe.get_all(
+			'Payment Entry Reference',
+			filters={
+				'reference_doctype': 'Sales Invoice',
+				'reference_name': ('in', invoice_names)
+			},
+			fields=['parent', 'reference_name', 'allocated_amount', 'creation']
+		)
+
+		payment_entry_names = list({ref.parent for ref in payment_refs})
+		payment_map = {}
+
+		if payment_entry_names:
+			payment_docs = frappe.get_all(
+				'Payment Entry',
+				filters={'name': ('in', payment_entry_names)},
+				fields=[
+					'name', 'posting_date', 'posting_time', 'mode_of_payment', 'payment_type',
+					'paid_amount', 'received_amount', 'status', 'docstatus', 'party',
+					'party_type', 'owner', 'reference_no', 'reference_date', 'creation', 'modified'
+				]
+			)
+			for payment in payment_docs:
+				payment_map[payment.name] = frappe._dict(payment)
+
+		default_currency = None
+		if appointment.company:
+			default_currency = frappe.db.get_value('Company', appointment.company, 'default_currency')
+
+		for ref in payment_refs:
+			payment_entry = payment_map.get(ref.parent)
+			if not payment_entry:
+				continue
+
+			invoice = invoice_map.get(ref.reference_name)
+			currency = invoice.currency if invoice else default_currency or frappe.defaults.get_global_default('currency')
+
+			if payment_entry.posting_date:
+				post_time = payment_entry.posting_time or '00:00:00'
+				pe_timestamp = f"{payment_entry.posting_date} {post_time}"
+			else:
+				pe_timestamp = payment_entry.creation or ref.creation
+
+			amount_label = fmt_money(ref.allocated_amount or 0, currency=currency)
+			description = _('Applied {0} to {1}').format(amount_label, ref.reference_name)
+
+			extra = []
+			context = invoice_context.get(ref.reference_name)
+			if context and context.get('label'):
+				extra.append({'label': _('Invoice Type'), 'value': context['label']})
+			if payment_entry.mode_of_payment:
+				extra.append({'label': _('Mode'), 'value': payment_entry.mode_of_payment})
+			if payment_entry.reference_no:
+				extra.append({'label': _('Reference No.'), 'value': payment_entry.reference_no})
+
+			add_entry(
+				'payment',
+				pe_timestamp,
+				_('Payment Entry {0}').format(payment_entry.name),
+				description=description,
+				badge=payment_entry.status,
+				doc={'doctype': 'Payment Entry', 'name': payment_entry.name, 'label': payment_entry.name},
+				reference={'doctype': 'Sales Invoice', 'name': ref.reference_name, 'label': ref.reference_name},
+				user=payment_entry.owner,
+				extra=extra
+			)
+
+	entries.sort(key=lambda entry: entry["_sort_ts"])
+	for entry in entries:
+		entry.pop('_sort_ts', None)
+
+	return {
+		'entries': entries,
+		'financial_summary': list(financial_totals.values()),
+		'latest_status': appointment.get('custom_visit_status') or appointment.status,
+	}
 
 @frappe.whitelist()
 def transferToPractitioner(app, practitioner):
@@ -554,10 +786,15 @@ def create_invoice(appointment, profile, payment_methods):
 	branch = branches[0] if branches else ''
 	customer_invoice_row = False
 	insurance_invoice_row = False
+	patient_invoice = None
+	insurance_invoice = None
+	insurance_price_list = 'Insurance Price' if frappe.db.exists('Price List', 'Insurance Price') else 'Standard Selling'
 	for invoice_item in appointment_doc.custom_invoice_items:
-		if not invoice_item.customer_invoice and float(invoice_item.customer_amount) > 0:
+		customer_amount = flt(invoice_item.customer_amount)
+		insurance_amount = flt(getattr(invoice_item, "insurance_amount", 0))
+		if not invoice_item.customer_invoice and customer_amount > 0:
 			customer_invoice_row = True
-		if not invoice_item.insurance_invoice and float(invoice_item.customer_amount) > 0:
+		if not invoice_item.insurance_invoice and insurance_amount > 0:
 			insurance_invoice_row = True
 
 	if appointment_doc.custom_payment_type == 'Self Payment' and customer_invoice_row:
@@ -578,10 +815,11 @@ def create_invoice(appointment, profile, payment_methods):
 		invoice.selling_price_list = 'Standard Selling'
 		for invoice_item in appointment_doc.custom_invoice_items:
 			if not invoice_item.customer_invoice:
+				qty = flt(invoice_item.quantity) or 1
 				invoice.append('items', {
 					'item_code': invoice_item.item,
 					'item_name': invoice_item.item_name,
-					'qty': invoice_item.quantity,
+					'qty': qty,
 					'discount_percentage': invoice_item.discount_percentage,
 					'discount_amount': invoice_item.discount_amount,
 				})
@@ -615,17 +853,19 @@ def create_invoice(appointment, profile, payment_methods):
 			patient_invoice.apply_discount_on = appointment_doc.custom_apply_discount_on
 			patient_invoice.additional_discount_percentage = appointment_doc.custom_invoice_discount_percentage
 			patient_invoice.discount_amount = appointment_doc.custom_invoice_discount_amount
-			patient_invoice.selling_price_list = 'Insurance Price' or 'Standard Selling'
+			patient_invoice.selling_price_list = insurance_price_list
 			for invoice_item in appointment_doc.custom_invoice_items:
 				if not invoice_item.customer_invoice:
+					qty = flt(invoice_item.quantity) or 1
+					customer_amount = flt(invoice_item.customer_amount)
 					patient_invoice.append('items', {
 						'item_code': invoice_item.item,
 						'item_name': invoice_item.item_name,
-						'qty': invoice_item.quantity,
+						'qty': qty,
 						'discount_percentage': invoice_item.discount_percentage,
 						'discount_amount': invoice_item.discount_amount,
-						'rate': float(invoice_item.customer_amount) / float(invoice_item.quantity),
-						'amount': invoice_item.customer_amount,
+						'rate': customer_amount / qty,
+						'amount': customer_amount,
 					})
 			for method in payment_methods:
 				patient_invoice.append('payments', {
@@ -648,29 +888,34 @@ def create_invoice(appointment, profile, payment_methods):
 			insurance_invoice.service_unit = appointment_doc.service_unit
 			insurance_invoice.branch = appointment_doc.custom_branch or branch or ''
 			insurance_invoice.taxes_and_charges = appointment_doc.custom_invoice_tax_template
-			insurance_invoice.selling_price_list = 'Insurance Price' or 'Standard Selling'
+			insurance_invoice.selling_price_list = insurance_price_list
 			for invoice_item in appointment_doc.custom_invoice_items:
 				if not invoice_item.insurance_invoice:
+					qty = flt(invoice_item.quantity) or 1
+					insurance_amount = flt(getattr(invoice_item, "insurance_amount", 0))
 					insurance_invoice.append('items', {
 						'item_code': invoice_item.item,
 						'item_name': invoice_item.item_name,
 						'uom': invoice_item.item_uom,
-						'qty': invoice_item.quantity,
-						'rate': float(invoice_item.insurance_amount) / float(invoice_item.quantity),
-						'amount': invoice_item.insurance_amount,
+						'qty': qty,
+						'rate': insurance_amount / qty if qty else 0,
+						'amount': insurance_amount,
 					})
 			insurance_invoice.save()
 			insurance_invoice.submit()
 
 		for invoice_item in appointment_doc.custom_invoice_items:
-			if not invoice_item.customer_invoice:
+			if patient_invoice and not invoice_item.customer_invoice:
 				invoice_item.customer_invoice = patient_invoice.name
 				
-			if not invoice_item.insurance_invoice:
+			if insurance_invoice and not invoice_item.insurance_invoice:
 				invoice_item.insurance_invoice = insurance_invoice.name
 				
 		appointment_doc.save()
-		return {'insurance_invoice': insurance_invoice.name, 'customer_invoice': patient_invoice.name}
+		return {
+			'insurance_invoice': insurance_invoice.name if insurance_invoice else None,
+			'customer_invoice': patient_invoice.name if patient_invoice else None
+		}
 
 @frappe.whitelist()
 def create_mock_invoice(appointment):
@@ -678,9 +923,10 @@ def create_mock_invoice(appointment):
 	patient = frappe.get_doc('Patient', appointment_doc.patient)
 	branches = frappe.db.get_all('Branch', order_by='creation', pluck='name')
 	branch = branches[0] if branches else ''
+	insurance_price_list = 'Insurance Price' if frappe.db.exists('Price List', 'Insurance Price') else 'Standard Selling'
 	customer_invoice_row = False
 	for invoice_item in appointment_doc.custom_invoice_items:
-		if not invoice_item.customer_invoice and float(invoice_item.customer_amount) > 0:
+		if not invoice_item.customer_invoice and flt(invoice_item.customer_amount) > 0:
 			customer_invoice_row = True
 	if customer_invoice_row:
 		invoice = frappe.new_doc('Sales Invoice')
@@ -700,25 +946,28 @@ def create_mock_invoice(appointment):
 			invoice.selling_price_list = 'Standard Selling'
 			for invoice_item in appointment_doc.custom_invoice_items:
 				if not invoice_item.customer_invoice:
+					qty = flt(invoice_item.quantity) or 1
 					invoice.append('items', {
 						'item_code': invoice_item.item,
 						'item_name': invoice_item.item_name,
-						'qty': invoice_item.quantity,
+						'qty': qty,
 						'discount_percentage': invoice_item.discount_percentage,
 						'discount_amount': invoice_item.discount_amount,
 					})
 		else:
-			invoice.selling_price_list = 'Insurance Price' or 'Standard Selling'
+			invoice.selling_price_list = insurance_price_list
 			for invoice_item in appointment_doc.custom_invoice_items:
 				if not invoice_item.customer_invoice:
+					qty = flt(invoice_item.quantity) or 1
+					customer_amount = flt(invoice_item.customer_amount)
 					invoice.append('items', {
 						'item_code': invoice_item.item,
 						'item_name': invoice_item.item_name,
-						'qty': invoice_item.quantity,
+						'qty': qty,
 						'discount_percentage': invoice_item.discount_percentage,
 						'discount_amount': invoice_item.discount_amount,
-						'rate': float(invoice_item.customer_amount) / float(invoice_item.quantity),
-						'amount': invoice_item.customer_amount,
+						'rate': customer_amount / qty,
+						'amount': customer_amount,
 					})
 		invoice.set_missing_values()
 		invoice.calculate_taxes_and_totals()
@@ -1081,7 +1330,9 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	appo.patient_name 				as customer,
 	appo.appointment_datetime 		as starts_at,
 	appo.appointment_type 			as appointment_type,
-	appo.custom_visit_reason 		as visit_reason,	
+	appo.custom_visit_reason 		as visit_reason,
+	appo.custom_confirmed	 		as confirmed,
+	appo.reminded	 				as reminded,
 	TIMESTAMPADD(minute,appo.duration,appo.appointment_datetime) 	as ends_at,
 	appo.service_unit 				as room,
 	0	 							as allDay,
@@ -1437,8 +1688,8 @@ def validate_practitioner_schedules(schedule_entry, practitioner):
 
 @frappe.whitelist()
 def get_waiting_list():
-    return frappe.db.sql("""
-        SELECT 
+	return frappe.db.sql("""
+		SELECT 
 			pa.name,
 			pa.patient_name,
 			pa.patient,
@@ -1461,251 +1712,743 @@ def get_waiting_list():
 		ORDER BY at.arrival_time DESC
 		LIMIT 5;
 
-    """, as_dict=True)
+	""", as_dict=True)
 
 @frappe.whitelist()
 def add_item_to_appointment(appointment, item_code, qty: int = 1):
-    appt = frappe.get_doc("Patient Appointment", appointment)
-    row = appt.append("custom_billing_items", {
-        "item_code": item_code,
-        "qty": flt(qty or 1),
-    })
-    appt.save(ignore_permissions=True)
-    frappe.db.commit()
-    return row.name
+	appt = frappe.get_doc("Patient Appointment", appointment)
+	row = appt.append("custom_billing_items", {
+		"item_code": item_code,
+		"qty": flt(qty or 1),
+	})
+	appt.save(ignore_permissions=True)
+	frappe.db.commit()
+	return row.name
 
 @frappe.whitelist()
 def remove_item_from_appointment(rowname):
-    # rowname is the child row name in Appointment Billing Items table
-    child = frappe.get_doc("Appointment Billing Items", rowname)
-    parent = child.parent
-    child.delete()
-    frappe.db.commit()
-    return parent
+	# rowname is the child row name in Appointment Billing Items table
+	child = frappe.get_doc("Appointment Billing Items", rowname)
+	parent = child.parent
+	child.delete()
+	frappe.db.commit()
+	return parent
 
 @frappe.whitelist()
 def update_item_qty_in_appointment(rowname, qty: int):
-    child = frappe.get_doc("Appointment Billing Items", rowname)
-    child.qty = flt(qty or 1)
-    child.save(ignore_permissions=True)
-    frappe.db.commit()
-    return child.parent
+	child = frappe.get_doc("Appointment Billing Items", rowname)
+	child.qty = flt(qty or 1)
+	child.save(ignore_permissions=True)
+	frappe.db.commit()
+	return child.parent
+
+def _get_default_price_list():
+	"""Return a valid selling price list or raise if none are configured."""
+	candidates = [
+		frappe.db.get_single_value("Selling Settings", "selling_price_list"),
+		"Standard Selling",
+	]
+	for price_list in candidates:
+		if price_list and frappe.db.exists("Price List", price_list):
+			return price_list
+	frappe.throw(_("No selling price list configured. Please create one in Selling Settings."))
+
+def _get_active_insurance_policy(patient_name, company=None, on_date=None):
+	"""Return the active Patient Insurance Policy for the given patient."""
+	if not frappe.db.exists("DocType", "Patient Insurance Policy"):
+		return None
+
+	active_on = getdate(on_date) if on_date else getdate()
+	policies = frappe.get_all(
+		"Patient Insurance Policy",
+		filters={
+			"patient": patient_name,
+			"docstatus": 1,
+			"policy_expiry_date": (">=", active_on),
+		},
+		fields=["name", "insurance_plan", "insurance_payor", "policy_expiry_date", "policy_number"],
+		order_by="policy_expiry_date asc",
+	)
+
+	for policy in policies:
+		if is_insurance_policy_valid(policy.name, on_date=active_on, company=company):
+			return policy
+
+	return None
+
+def sync_patient_billing_status(doc, method):
+	"""Already implemented — keep as is."""
+
+def sync_insurance_claim_status(doc, method):
+	"""Sync insurance claim status to Patient Appointment when a claim is updated."""
+	if not doc.patient or not frappe.db.exists("DocType", "Patient Appointment"):
+		return
+
+	appts = frappe.get_all(
+		"Patient Appointment",
+		filters={"patient": doc.patient, "custom_insurance_sales_invoice": ["!=", ""]},
+		fields=["name", "custom_insurance_sales_invoice"],
+	)
+
+	for appt in appts:
+		# link claim to appointment if invoice matches
+		if appt.custom_insurance_sales_invoice and appt.custom_insurance_sales_invoice in (doc.sales_invoice or ""):
+			status = doc.status or "Draft"
+			frappe.db.set_value("Patient Appointment", appt.name, "custom_insurance_status", status)
+			
+@frappe.whitelist()
+def get_active_insurance_policy_summary(patient, company=None, on_date=None):
+	"""Return active insurance policy details for UI consumption."""
+	if not patient or not frappe.db.exists("DocType", "Patient Insurance Policy"):
+		return {}
+
+	policy = _get_active_insurance_policy(patient, company=company, on_date=on_date)
+	if not policy:
+		return {}
+
+	return {
+		"name": policy.name,
+		"insurance_payor": policy.insurance_payor,
+		"insurance_plan": policy.insurance_plan,
+		"policy_number": policy.get("policy_number"),
+		"policy_expiry_date": policy.policy_expiry_date,
+	}
+
+@frappe.whitelist()
+def list_patient_insurance_policies(patient):
+	if not patient or not frappe.db.exists("DocType", "Patient Insurance Policy"):
+		return []
+
+	policies = frappe.get_all(
+		"Patient Insurance Policy",
+		filters={"patient": patient},
+		fields=[
+			"name",
+			"policy_number",
+			"insurance_payor",
+			"insurance_plan",
+			"policy_expiry_date",
+			"docstatus",
+		],
+		order_by="policy_expiry_date desc",
+	)
+	return policies
+
+@frappe.whitelist()
+def create_patient_insurance_policy(patient, insurance_payor, policy_number, policy_expiry_date, insurance_plan=None):
+	if not frappe.db.exists("DocType", "Patient Insurance Policy"):
+		frappe.throw(_("Patient Insurance Policy doctype is not available on this site."))
+
+	doc = frappe.new_doc("Patient Insurance Policy")
+	doc.patient = patient
+	doc.insurance_payor = insurance_payor
+	doc.policy_number = policy_number
+	doc.policy_expiry_date = policy_expiry_date
+	doc.insurance_plan = insurance_plan or None
+	doc.insert(ignore_permissions=True)
+	if doc.meta.is_submittable:
+		doc.submit()
+	return doc.as_dict()
+
+@frappe.whitelist()
+def update_patient_insurance_policy(policy_name, insurance_payor=None, insurance_plan=None, policy_number=None, policy_expiry_date=None):
+	if not frappe.db.exists("DocType", "Patient Insurance Policy"):
+		frappe.throw(_("Patient Insurance Policy doctype is not available on this site."))
+
+	doc = frappe.get_doc("Patient Insurance Policy", policy_name)
+	updates = {}
+	if insurance_payor is not None:
+		updates["insurance_payor"] = insurance_payor
+	if insurance_plan is not None:
+		updates["insurance_plan"] = insurance_plan or None
+	if policy_number is not None:
+		updates["policy_number"] = policy_number
+	if policy_expiry_date is not None:
+		updates["policy_expiry_date"] = policy_expiry_date
+
+	if updates:
+		doc.flags.ignore_validate_update_after_submit = True
+		doc.flags.ignore_permissions = True
+		doc.update(updates)
+		doc.save(ignore_permissions=True)
+	return doc.as_dict()
+
+@frappe.whitelist()
+def record_sales_invoice_payment(invoice, payments=None, mode_of_payment=None, amount=None, reference_no=None, posting_date=None, submit_invoice: int = 1):
+	"""Record payment directly on a Sales Invoice (POS style)."""
+	if not invoice or not frappe.db.exists("Sales Invoice", invoice):
+		frappe.throw(_("Sales Invoice {0} not found.").format(invoice or ""))
+
+	def _ensure_list(value):
+		if value is None or value == "":
+			return []
+		if isinstance(value, (list, tuple)):
+			return list(value)
+		if isinstance(value, str):
+			try:
+				parsed = frappe.parse_json(value)
+			except Exception:
+				return [value]
+			else:
+				if isinstance(parsed, list):
+					return parsed
+				return [parsed]
+		return [value]
+
+	def _coerce_rows(primary=None, amounts=None, references=None):
+		rows = _ensure_list(primary)
+		if rows and isinstance(rows[0], dict):
+			refs = _ensure_list(references)
+			coerced = []
+			for idx, row in enumerate(rows):
+				coerced.append({
+					"mode_of_payment": row.get("mode_of_payment"),
+					"amount": flt(row.get("amount") or 0),
+					"reference_no": row.get("reference_no") or (refs[idx] if idx < len(refs) else ""),
+				})
+			return coerced
+
+		mops = rows
+		amount_list = _ensure_list(amounts)
+		ref_list = _ensure_list(references)
+
+		coerced = []
+		for idx, mop in enumerate(mops):
+			if mop in (None, ""):
+				continue
+			coerced.append({
+				"mode_of_payment": mop,
+				"amount": flt(amount_list[idx] if idx < len(amount_list) else 0),
+				"reference_no": ref_list[idx] if idx < len(ref_list) else "",
+			})
+		return coerced
+
+	payment_rows = _coerce_rows(payments, amounts=amount, references=reference_no) or _coerce_rows(mode_of_payment, amounts=amount, references=reference_no)
+	if not payment_rows:
+		payment_rows = [{
+			"mode_of_payment": mode_of_payment,
+			"amount": flt(amount or 0),
+			"reference_no": reference_no or "",
+		}]
+
+	total_amount = sum(flt(row.get("amount") or 0) for row in payment_rows)
+	if not total_amount:
+		frappe.throw(_("Payment amount must be greater than zero."))
+
+	inv = frappe.get_doc("Sales Invoice", invoice)
+	if inv.docstatus == 1:
+		frappe.throw(_("Sales Invoice {0} is already submitted. Please amend it or create a Payment Entry.").format(inv.name))
+
+	inv.is_pos = 1
+	if posting_date:
+		inv.posting_date = posting_date
+		inv.due_date = posting_date
+	elif not inv.due_date:
+		inv.due_date = inv.posting_date
+
+	inv.set("payments", [])
+
+	default_mop = 'Cash'
+	outstanding = inv.outstanding_amount if inv.docstatus == 1 else inv.grand_total
+
+	if not payment_rows:
+		payment_rows = [{
+			"mode_of_payment": default_mop or "",
+			"amount": outstanding,
+			"reference_no": reference_no or "",
+		}]
+
+	for idx, row in enumerate(payment_rows):
+		mop = row.get("mode_of_payment") or default_mop
+		row_amount = flt(row.get("amount") or 0)
+		if not mop:
+			frappe.throw(_("Mode of Payment is required for payment row {0}.").format(idx + 1))
+		if row_amount <= 0:
+			continue
+
+		inv.append("payments", {
+			"mode_of_payment": mop,
+			"amount": row_amount,
+			"base_amount": row_amount,
+			"default": 1 if idx == 0 else 0,
+			"reference_no": row.get("reference_no") or reference_no or "",
+		})
+
+	inv.set_missing_values()
+	inv.calculate_taxes_and_totals()
+	inv.save(ignore_permissions=True)
+
+	if cint(submit_invoice):
+		inv.submit()
+
+	return {
+		"invoice": inv.name,
+		"submitted": inv.docstatus == 1,
+		"outstanding": inv.outstanding_amount,
+		"total_paid": sum(p.amount for p in inv.payments),
+	}
 
 def _resolve_price_list(appt, patient_doc):
-    payment_type = (appt.get("custom_payment_type") or "").lower()
-    if "insur" in payment_type:
-        sub = frappe.get_value(
-            "Healthcare Insurance Subscription",
-            {"patient": appt.patient, "docstatus": 1, "disabled": 0},
-            ["insurance_company"],
-            as_dict=True
-        )
-        if sub and sub.insurance_company:
-            price_list = frappe.db.get_value("Healthcare Insurance Company", sub.insurance_company, "price_list")
-            if price_list:
-                return price_list, True
+	payment_type = (appt.get("custom_payment_type") or "").lower()
+	default_price_list = _get_default_price_list()
+	if "insur" in payment_type:
+		active_on = getattr(appt, "appointment_date", None) or getattr(appt, "posting_date", None) or nowdate()
+		company = getattr(appt, "company", None) or frappe.get_single("Global Defaults").default_company
+		policy = _get_active_insurance_policy(patient_doc.name, company=company, on_date=active_on)
+		if policy:
+			price_lists = get_insurance_price_lists(policy.name, company)
+			preferred_price_list = (
+				price_lists.get("plan_price_list")
+				or price_lists.get("default_price_list")
+				or default_price_list
+			)
+			if preferred_price_list and frappe.db.exists("Price List", preferred_price_list):
+				return preferred_price_list, True
+			return default_price_list, True
 
-    # fallback: default selling price list
-    return frappe.db.get_single_value("Selling Settings", "selling_price_list"), False
+	# fallback: default selling price list
+	return default_price_list, False
 
 def _get_item_rate(item_code, price_list, currency=None):
-    # Pull rate from Item Price
-    rate = frappe.db.get_value("Item Price",
-        {"item_code": item_code, "price_list": price_list},
-        "price_list_rate")
-    if not rate:
-        rate = 0
-    if currency:
-        # you can add currency conversion here if needed
-        pass
-    return flt(rate, 2)
+	# Pull rate from Item Price
+	rate = frappe.db.get_value("Item Price",
+		{"item_code": item_code, "price_list": price_list},
+		"price_list_rate")
+	if not rate:
+		rate = 0
+	if currency:
+		# you can add currency conversion here if needed
+		pass
+	return flt(rate, 2)
 
-def _coverage_split(patient_name, item_code, unit_rate, qty):
-    """Split total between patient and insurance using active Healthcare Insurance Subscription."""
-    total = flt(unit_rate) * flt(qty)
+def _coverage_split(patient_name, item_code, unit_rate, qty, appointment_date=None, company=None):
+	"""Split total between patient and insurance using active Patient Insurance Policy."""
+	total = flt(unit_rate) * flt(qty)
 
-    # Defaults (no subscription): patient pays all
-    patient_share = total
-    insurance_share = 0
+	# Defaults (no subscription): patient pays all
+	patient_share = total
+	insurance_share = 0
+	if not frappe.db.exists("DocType", "Patient Insurance Policy"):
+		return flt(patient_share, 2), flt(insurance_share, 2)
 
-    sub = frappe.get_value(
-        "Healthcare Insurance Subscription",
-        {"patient": patient_name, "docstatus": 1, "disabled": 0},
-        ["name", "insurance_company", "copay_type", "copay_value"],
-        as_dict=True
-    )
+	policy = _get_active_insurance_policy(patient_name, company=company, on_date=appointment_date)
+	if policy and frappe.db.exists("DocType", "Item Insurance Eligibility"):
+		eligibility = get_insurance_eligibility(
+			item_code=item_code,
+			on_date=appointment_date or nowdate(),
+			insurance_plan=policy.get("insurance_plan"),
+		)
+		if eligibility:
+			coverage_pct = flt(eligibility.get("coverage") or 0)
+			discount_pct = flt(eligibility.get("discount") or 0)
+			discounted_total = total - (total * discount_pct * 0.01)
+			insurance_share = flt(discounted_total * coverage_pct * 0.01, 2)
+			patient_share = flt(discounted_total - insurance_share, 2)
 
-    if sub:
-        copay_type = (sub.get("copay_type") or "").strip()
-        copay_value = flt(sub.get("copay_value") or 0)
-
-        if copay_type == "Amount":
-            patient_share = min(copay_value, total)
-            insurance_share = max(total - patient_share, 0)
-        elif copay_type == "Percent":
-            pct = max(0, min(copay_value, 100))
-            patient_share = flt(total * (pct / 100.0), 2)
-            insurance_share = flt(total - patient_share, 2)
-        else:
-            # No copay → insurance covers all
-            patient_share = 0
-            insurance_share = total
-
-    return flt(patient_share, 2), flt(insurance_share, 2)
+	return flt(patient_share, 2), flt(insurance_share, 2)
 
 @frappe.whitelist()
 def get_appointment_items_snapshot(appointment_id):
-    """Return a snapshot: rows with computed rate, shares, and total blocks."""
-    appt = frappe.get_doc("Patient Appointment", appointment_id)
-    patient = frappe.get_doc("Patient", appt.patient)
-    currency = frappe.db.get_default("currency") or "BHD"
+	"""Return a snapshot: rows with computed rate, shares, and total blocks."""
+	appt = frappe.get_doc("Patient Appointment", appointment_id)
+	patient = frappe.get_doc("Patient", appt.patient)
+	currency = frappe.db.get_default("currency") or "BHD"
 
-    price_list, is_insurance = _resolve_price_list(appt, patient)
+	price_list, is_insurance = _resolve_price_list(appt, patient)
 
-    rows = []
-    totals_patient = 0.0
-    totals_insurance = 0.0
+	rows = []
+	totals_patient = 0.0
+	totals_insurance = 0.0
+	appt_date = getattr(appt, "appointment_date", None) or getattr(appt, "posting_date", None) or nowdate()
+	company = getattr(appt, "company", None)
 
-    for r in appt.get("custom_billing_items") or []:
-        unit_rate = _get_item_rate(r.item_code, price_list, currency)
-        qty = flt(r.qty or 1)
+	for r in appt.get("custom_billing_items") or []:
+		unit_rate = _get_item_rate(r.item_code, price_list, currency)
+		qty = flt(r.qty or 1)
 
-        if is_insurance:
-            patient_share, insurance_share = _coverage_split(patient.name, r.item_code, unit_rate, qty)
-        else:
-            patient_share = unit_rate * qty
-            insurance_share = 0.0
+		if is_insurance:
+			patient_share, insurance_share = _coverage_split(
+				patient.name,
+				r.item_code,
+				unit_rate,
+				qty,
+				appointment_date=appt_date,
+				company=company,
+			)
+		else:
+			patient_share = unit_rate * qty
+			insurance_share = 0.0
 
-        rows.append({
-            "name": r.name,
-            "item_code": r.item_code,
-            "item_name": r.item_name or frappe.db.get_value("Item", r.item_code, "item_name"),
-            "qty": qty,
-            "rate": unit_rate,
-            "patient_share": patient_share,
-            "insurance_share": insurance_share,
-            "amount": flt(patient_share + insurance_share, 2),
-        })
-        totals_patient += patient_share
-        totals_insurance += insurance_share
+		rows.append({
+			"name": r.name,
+			"item_code": r.item_code,
+			"item_name": r.item_name or frappe.db.get_value("Item", r.item_code, "item_name"),
+			"qty": qty,
+			"rate": unit_rate,
+			"patient_share": patient_share,
+			"insurance_share": insurance_share,
+			"amount": flt(patient_share + insurance_share, 2),
+		})
+		totals_patient += patient_share
+		totals_insurance += insurance_share
 
-    return {
-        "rows": rows,
-        "currency": currency,
-        "totals": {
-            "patient": flt(totals_patient, 2),
-            "insurance": flt(totals_insurance, 2),
-            "grand": flt(totals_patient + totals_insurance, 2),
-        }
-    }
+	return {
+		"rows": rows,
+		"currency": currency,
+		"totals": {
+			"patient": flt(totals_patient, 2),
+			"insurance": flt(totals_insurance, 2),
+			"grand": flt(totals_patient + totals_insurance, 2),
+		}
+	}
 
-def _make_invoice(customer, items, posting_date=None, company=None, currency=None, patient=None):
-    inv = frappe.new_doc("Sales Invoice")
-    inv.customer = customer
-    inv.posting_date = posting_date or nowdate()
-    if company: inv.company = company
-    if currency: inv.currency = currency
-    if patient: inv.patient = patient
+def _make_invoice(customer, items, posting_date=None, company=None, currency=None, patient=None, selling_price_list=None):
+	inv = frappe.new_doc("Sales Invoice")
+	inv.customer = customer
+	inv.posting_date = posting_date or nowdate()
+	if company: inv.company = company
+	if currency: inv.currency = currency
+	if patient: inv.patient = patient
+	if selling_price_list: inv.selling_price_list = selling_price_list
 
-    for it in items:
-        inv.append("items", {
-            "item_code": it["item_code"],
-            "qty": flt(it.get("qty", 1)),
-            "rate": flt(it.get("rate", 0)),
-            "description": it.get("description") or "",
-        })
+	for it in items:
+		inv.append("items", {
+			"item_code": it["item_code"],
+			"qty": flt(it.get("qty", 1)),
+			"rate": flt(it.get("rate", 0)),
+			"description": it.get("description") or "",
+		})
 
-    inv.insert(ignore_permissions=True)
-    return inv
+	inv.insert(ignore_permissions=True)
+	return inv
+
+def _overwrite_invoice(invoice_doc, items, selling_price_list=None, submit_invoice=False):
+	invoice_doc.set("items", [])
+	for it in items:
+		invoice_doc.append("items", {
+			"item_code": it["item_code"],
+			"qty": flt(it.get("qty", 1)),
+			"rate": flt(it.get("rate", 0)),
+			"description": it.get("description") or "",
+		})
+
+	if selling_price_list:
+		invoice_doc.selling_price_list = selling_price_list
+
+	invoice_doc.posting_date = nowdate()
+	if hasattr(invoice_doc, "due_date"):
+		invoice_doc.due_date = invoice_doc.posting_date
+
+	invoice_doc.set_missing_values()
+	invoice_doc.calculate_taxes_and_totals()
+	invoice_doc.save(ignore_permissions=True)
+
+	if submit_invoice and invoice_doc.docstatus == 0:
+		invoice_doc.submit()
+
+	return invoice_doc
 
 def _update_patient_billing_status(appt, patient_invoice=None):
-    if not patient_invoice or not frappe.db.exists("Sales Invoice", patient_invoice):
-        appt.db_set("custom_billing_status", "Not Billed")
-        return
+	if not patient_invoice or not frappe.db.exists("Sales Invoice", patient_invoice):
+		appt.db_set("custom_billing_status", "Not Billed")
+		return
 
-    inv = frappe.get_doc("Sales Invoice", patient_invoice)
+	inv = frappe.get_doc("Sales Invoice", patient_invoice)
 
-    if inv.docstatus == 2:
-        appt.db_set("custom_billing_status", "Cancelled")
-    elif inv.docstatus == 1 and inv.outstanding_amount == 0:
-        appt.db_set("custom_billing_status", "Paid")
-    elif inv.docstatus == 1 and 0 < inv.outstanding_amount < inv.grand_total:
-        appt.db_set("custom_billing_status", "Partially Paid")
-    elif inv.docstatus == 1:
-        appt.db_set("custom_billing_status", "Not Paid")
-    else:
-        appt.db_set("custom_billing_status", "Not Billed")
+	if inv.docstatus == 2:
+		appt.db_set("custom_billing_status", "Cancelled")
+	elif inv.docstatus == 1 and inv.outstanding_amount == 0:
+		appt.db_set("custom_billing_status", "Paid")
+	elif inv.docstatus == 1 and 0 < inv.outstanding_amount < inv.grand_total:
+		appt.db_set("custom_billing_status", "Partially Paid")
+	elif inv.docstatus == 1:
+		appt.db_set("custom_billing_status", "Not Paid")
+	else:
+		appt.db_set("custom_billing_status", "Not Billed")
 
 @frappe.whitelist()
 def create_invoices_for_appointment(appointment_id, submit_invoice: int = 0):
-    """Two invoices model (Patient + Insurance)."""
-    appt = frappe.get_doc("Patient Appointment", appointment_id)
-    if not appt.get("custom_billing_items"):
-        frappe.throw("Please add at least one item to bill.")
+	"""Two invoices model (Patient + Insurance)."""
+	appt = frappe.get_doc("Patient Appointment", appointment_id)
+	if not appt.get("custom_billing_items"):
+		frappe.throw("Please add at least one item to bill.")
 
-    patient = frappe.get_doc("Patient", appt.patient)
-    company = appt.company or frappe.get_single("Global Defaults").default_company
-    currency = frappe.db.get_default("currency") or "BHD"
+	patient = frappe.get_doc("Patient", appt.patient)
+	company = appt.company or frappe.get_single("Global Defaults").default_company
+	currency = frappe.db.get_default("currency") or "BHD"
 
-    price_list, is_insurance = _resolve_price_list(appt, patient)
+	price_list, is_insurance = _resolve_price_list(appt, patient)
 
-    patient_items, insurance_items = [], []
+	patient_items, insurance_items = [], []
+	appt_date = getattr(appt, "appointment_date", None) or getattr(appt, "posting_date", None) or nowdate()
 
-    for r in appt.custom_billing_items:
-        qty = flt(r.qty or 1)
-        unit_rate = _get_item_rate(r.item_code, price_list, currency)
+	for r in appt.custom_billing_items:
+		qty = flt(r.qty or 1)
+		unit_rate = _get_item_rate(r.item_code, price_list, currency)
 
-        if is_insurance:
-            patient_share, insurance_share = _coverage_split(patient.name, r.item_code, unit_rate, qty)
-            if patient_share > 0:
-                patient_items.append({"item_code": r.item_code, "qty": 1, "rate": flt(patient_share, 2)})
-            if insurance_share > 0:
-                insurance_items.append({"item_code": r.item_code, "qty": 1, "rate": flt(insurance_share, 2)})
-        else:
-            patient_items.append({"item_code": r.item_code, "qty": qty, "rate": unit_rate})
+		if is_insurance:
+			patient_share, insurance_share = _coverage_split(
+				patient.name,
+				r.item_code,
+				unit_rate,
+				qty,
+				appointment_date=appt_date,
+				company=company,
+			)
+			if patient_share > 0:
+				per_unit_patient_rate = flt(patient_share / qty, 6)
+				patient_items.append({
+					"item_code": r.item_code,
+					"qty": qty,
+					"rate": per_unit_patient_rate,
+				})
+			if insurance_share > 0:
+				per_unit_insurance_rate = flt(insurance_share / qty, 6)
+				insurance_items.append({
+					"item_code": r.item_code,
+					"qty": qty,
+					"rate": per_unit_insurance_rate,
+				})
+		else:
+			patient_items.append({"item_code": r.item_code, "qty": qty, "rate": unit_rate})
 
-    created = {"patient_invoice": None, "insurance_invoice": None}
+	created = {
+		"patient_invoice": None,
+		"insurance_invoice": None,
+		"patient_invoice_updated": False,
+		"insurance_invoice_updated": False,
+	}
 
-    # Patient invoice
-    if patient_items:
-        cust = frappe.db.get_value("Patient", appt.patient, "customer") or frappe.throw("Patient is not linked to a Customer.")
-        inv = _make_invoice(cust, patient_items, company=company, currency=currency, patient=appt.patient)
-        created["patient_invoice"] = inv.name
-        appt.db_set("ref_sales_invoice", inv.name)
-        if submit_invoice: inv.submit()
+	submit_flag = bool(cint(submit_invoice))
+	existing_patient_invoice = (
+		appt.ref_sales_invoice
+		if appt.ref_sales_invoice and frappe.db.exists("Sales Invoice", appt.ref_sales_invoice)
+		else None
+	)
+	existing_insurance_invoice = (
+		appt.custom_insurance_sales_invoice
+		if appt.custom_insurance_sales_invoice and frappe.db.exists("Sales Invoice", appt.custom_insurance_sales_invoice)
+		else None
+	)
 
-    # Insurance invoice
-    if insurance_items:
-        # resolve insurance customer
-        ins_cust = None
-        sub = frappe.db.get_value("Healthcare Insurance Subscription",
-                                  {"patient": appt.patient, "docstatus": 1, "disabled": 0},
-                                  ["insurance_company"], as_dict=True)
-        if sub and sub.insurance_company:
-            ins_cust = frappe.db.get_value("Healthcare Insurance Company", sub.insurance_company, "customer")
-        if not ins_cust:
-            frappe.throw("Active insurance subscription found but Insurance Company is missing a linked Customer.")
+	# Patient invoice
+	if patient_items:
+		cust = frappe.db.get_value("Patient", appt.patient, "customer")
+		if not cust:
+			frappe.throw(_("Patient is not linked to a Customer."))
 
-        inv_ins = _make_invoice(ins_cust, insurance_items, company=company, currency=currency, patient=appt.patient)
-        created["insurance_invoice"] = inv_ins.name
-        appt.db_set("custom_insurance_sales_invoice", inv_ins.name)
-        if submit_invoice: inv_ins.submit()
+		if existing_patient_invoice:
+			inv = frappe.get_doc("Sales Invoice", existing_patient_invoice)
+			if inv.docstatus == 1:
+				frappe.throw(
+					_("Sales Invoice {0} is submitted. Cancel or amend it before regenerating billing.").format(inv.name)
+				)
+			inv.customer = cust
+			inv.patient = appt.patient
+			inv.company = company
+			inv.currency = currency
+			inv = _overwrite_invoice(inv, patient_items, selling_price_list=price_list, submit_invoice=submit_flag)
+			created["patient_invoice_updated"] = True
+		else:
+			inv = _make_invoice(
+				cust,
+				patient_items,
+				company=company,
+				currency=currency,
+				patient=appt.patient,
+				selling_price_list=price_list,
+			)
+			inv.is_pos = 0
+			inv.due_date = inv.posting_date
+			inv.save(ignore_permissions=True)
+			if submit_flag:
+				inv.submit()
 
-    # Billing status
-    _update_patient_billing_status(appt, created.get("patient_invoice"))
+		created["patient_invoice"] = inv.name
+		appt.db_set("ref_sales_invoice", inv.name)
+	elif existing_patient_invoice:
+		created["patient_invoice"] = existing_patient_invoice
 
-    frappe.db.commit()
-    return created
+	# Insurance invoice
+	if insurance_items:
+		policy = _get_active_insurance_policy(appt.patient, company=company, on_date=appt_date)
+		if not policy:
+			frappe.throw(_("Cannot create insurance invoice without an active Patient Insurance Policy."))
+
+		ins_cust = frappe.db.get_value("Insurance Payor", policy.insurance_payor, "customer")
+		if not ins_cust:
+			frappe.throw(
+				_("Insurance Payor {0} is missing a linked Customer. Please update the payor record.").format(
+					policy.insurance_payor
+				)
+			)
+
+		if existing_insurance_invoice:
+			inv_ins = frappe.get_doc("Sales Invoice", existing_insurance_invoice)
+			if inv_ins.docstatus == 1:
+				frappe.throw(
+					_("Insurance Sales Invoice {0} is submitted. Cancel or amend it before regenerating billing.").format(
+						inv_ins.name
+					)
+				)
+			inv_ins.customer = ins_cust
+			inv_ins.patient = appt.patient
+			inv_ins.company = company
+			inv_ins.currency = currency
+			inv_ins.is_pos = 0
+			inv_ins = _overwrite_invoice(inv_ins, insurance_items, selling_price_list=price_list, submit_invoice=submit_flag)
+			created["insurance_invoice_updated"] = True
+		else:
+			inv_ins = _make_invoice(
+				ins_cust,
+				insurance_items,
+				company=company,
+				currency=currency,
+				patient=appt.patient,
+				selling_price_list=price_list,
+			)
+			inv_ins.is_pos = 0
+			inv_ins.due_date = inv_ins.posting_date
+			inv_ins.save(ignore_permissions=True)
+			if submit_flag:
+				inv_ins.submit()
+
+		created["insurance_invoice"] = inv_ins.name
+		appt.db_set("custom_insurance_sales_invoice", inv_ins.name)
+	elif existing_insurance_invoice:
+		created["insurance_invoice"] = existing_insurance_invoice
+
+	# Billing status
+	_update_patient_billing_status(appt, created.get("patient_invoice"))
+
+	frappe.db.commit()
+	return created
 
 def sync_patient_billing_status(doc, method):
-    """Auto-sync appointment billing_status whenever a Sales Invoice changes."""
-    if not doc.patient:
-        return
+	"""Auto-sync appointment billing_status whenever a Sales Invoice changes."""
+	if not doc.patient:
+		return
 
-    # find linked appointment(s)
-    appts = frappe.get_all("Patient Appointment",
-        filters={"ref_sales_invoice": doc.name},
-        pluck="name")
-    for appt_name in appts:
-        appt = frappe.get_doc("Patient Appointment", appt_name)
-        _update_patient_billing_status(appt, doc.name)
+	# find linked appointment(s)
+	appts = frappe.get_all("Patient Appointment",
+		filters={"ref_sales_invoice": doc.name},
+		pluck="name")
+	for appt_name in appts:
+		appt = frappe.get_doc("Patient Appointment", appt_name)
+		_update_patient_billing_status(appt, doc.name)
+
+@frappe.whitelist()
+def create_or_update_insurance_claim(appointment, invoice):
+	appt = frappe.get_doc("Patient Appointment", appointment)
+	if not frappe.db.exists("DocType", "Insurance Claim"):
+		frappe.throw(_("Insurance Claim DocType is not available in this site."))
+
+	company = appt.company or frappe.get_single("Global Defaults").default_company
+	appt_date = getattr(appt, "appointment_date", None) or nowdate()
+	policy = _get_active_insurance_policy(appt.patient, company=company, on_date=appt_date)
+	if not policy:
+		frappe.throw(_("Cannot create an insurance claim because the patient has no active insurance policy."))
+
+	payor_customer = frappe.db.get_value("Insurance Payor", policy.insurance_payor, "customer")
+	if not payor_customer:
+		frappe.throw(
+			_("Insurance Payor {0} is missing a linked Customer and cannot be used for claims.").format(
+				policy.insurance_payor
+			)
+		)
+
+	invoice_doc = frappe.get_doc("Sales Invoice", invoice)
+	if invoice_doc.docstatus == 0:
+		invoice_doc.submit()
+		invoice_doc.reload()
+	elif invoice_doc.docstatus != 1:
+		frappe.throw(_("Sales Invoice {0} must be submitted before creating an insurance claim.").format(invoice_doc.name))
+
+	existing_claim_name = frappe.db.get_value("Insurance Claim Coverage", {"sales_invoice": invoice}, "parent")
+	if existing_claim_name:
+		appt.db_set("custom_insurance_status", "Claimed")
+		return existing_claim_name
+
+	coverage_rows = []
+	patient_doc = frappe.get_doc("Patient", appt.patient)
+
+	for item in invoice_doc.items:
+		eligibility = get_insurance_eligibility(
+			item_code=item.item_code,
+			on_date=invoice_doc.posting_date,
+			insurance_plan=policy.insurance_plan,
+		)
+		template_dt = eligibility.get("template_dt") if eligibility else None
+		template_dn = eligibility.get("template_dn") if eligibility else None
+		if not template_dt and appt.appointment_type:
+			template_dt = "Appointment Type"
+			template_dn = appt.appointment_type
+
+		coverage_info = make_insurance_coverage(
+			patient=appt.patient,
+			policy=policy.name,
+			company=company,
+			template_dt=template_dt,
+			template_dn=template_dn,
+			item_code=item.item_code,
+			qty=item.qty,
+			rate=item.rate,
+		)
+		coverage_name = coverage_info.get("coverage") if coverage_info else None
+		if not coverage_name:
+			continue
+
+		coverage_doc = frappe.get_doc("Patient Insurance Coverage", coverage_name)
+		coverage_doc.update_invoice_details(flt(item.qty or 1), coverage_doc.coverage_amount or 0)
+		coverage_doc.reload()
+		coverage_rows.append((coverage_doc, item))
+
+	if not coverage_rows:
+		frappe.throw(_("Unable to create insurance coverage for the invoice items. Please verify insurance eligibility setup."))
+
+	claim = frappe.new_doc("Insurance Claim")
+	claim.patient = appt.patient
+	claim.company = company
+	claim.insurance_payor = policy.insurance_payor
+	claim.customer = payor_customer
+	claim.insurance_policy = policy.name
+	claim.insurance_plan = policy.insurance_plan
+	claim.policy_number = policy.get("policy_number")
+	claim.posting_date = nowdate()
+	claim.from_date = getdate(appt_date)
+	claim.to_date = getdate(appt_date)
+	claim.posting_date_based_on = "Sales Invoice"
+	claim.status = "Draft"
+
+	for coverage_doc, item in coverage_rows:
+		claim.append("coverages", {
+			"insurance_coverage": coverage_doc.name,
+			"insurance_coverage_posting_date": coverage_doc.posting_date,
+			"mode_of_approval": coverage_doc.mode_of_approval,
+			"policy_number": policy.get("policy_number"),
+			"policy_expiry_date": policy.policy_expiry_date,
+			"insurance_plan": policy.insurance_plan,
+			"patient": coverage_doc.patient,
+			"patient_name": coverage_doc.patient_name,
+			"gender": patient_doc.sex,
+			"birth_date": patient_doc.dob,
+			"sales_invoice": invoice_doc.name,
+			"sales_invoice_posting_date": invoice_doc.posting_date,
+			"item_code": item.item_code,
+			"sales_invoice_item_amount": item.amount,
+			"claim_coverage": coverage_doc.coverage,
+			"claim_amount": coverage_doc.coverage_amount,
+			"invoice_discount": coverage_doc.discount,
+			"invoice_discount_amount": coverage_doc.discount_amount,
+			"coverage": coverage_doc.coverage,
+			"coverage_amount": coverage_doc.coverage_amount,
+			"discount": coverage_doc.discount,
+			"discount_amount": coverage_doc.discount_amount,
+			"template_dt": coverage_doc.template_dt,
+			"template_dn": coverage_doc.template_dn,
+		})
+
+	claim.insert(ignore_permissions=True)
+	claim.add_comment("Comment", text=_("Linked from Sales Invoice {0}").format(invoice))
+	appt.db_set("custom_insurance_status", "Claimed")
+	return claim.name

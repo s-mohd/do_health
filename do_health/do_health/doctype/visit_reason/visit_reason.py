@@ -5,5 +5,5 @@
 from frappe.model.document import Document
 
 
-class HealthcareInvoiceItem(Document):
+class VisitReason(Document):
 	pass

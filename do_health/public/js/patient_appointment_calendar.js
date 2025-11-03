@@ -4,10 +4,10 @@
 const CONFIG = {
     LICENSE_KEY: 'CC-Attribution-NonCommercial-NoDerivatives',
     DEFAULT_VIEW: 'resourceTimeGridDay',
-    SLOT_DURATION: '00:05:00',
+    SLOT_DURATION: '00:15:00',
     SLOT_MIN_TIME: "08:00:00",
     SLOT_MAX_TIME: "20:00:00",
-    SLOT_LABEL_INTERVAL: "00:15:00",
+    SLOT_LABEL_INTERVAL: "01:00:00",
     SCROLL_TIME: "09:00:00",
     RESOURCE_AREA_WIDTH: '75px'
 };
@@ -24,19 +24,15 @@ const VISIT_STATUS_OPTIONS = [
 
 // Appointment-level actions exposed through the context menu
 const ACTION_MENU_ITEMS = [
-    { action: 'editAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
     { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-thumb-tack' },
-    { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
-    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
-    { action: 'openBillingInterface', label: 'Billing & Services', icon: 'fa-credit-card' },
-    { action: 'updatePaymentType', label: 'Update Payment Type', icon: 'fa-exchange' },
-    { action: 'addVisitReason', label: 'Update Visit Reason', icon: 'fa-commenting' },
-    { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
+    { action: 'editAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
     { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-calendar-plus-o' },
+    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
+    // { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
+    { action: 'openBillingInterface', label: 'Billing & Services', icon: 'fa-credit-card' },
+    { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
     { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-history' },
 ];
-
-const CONTEXT_MENU_ID = 'patient-appointment-action-menu';
 
 frappe.views.calendar["Patient Appointment"] = {
     // State management
@@ -372,6 +368,21 @@ frappe.views.calendar["Patient Appointment"] = {
             calendarView.markUnavailableSlots(info).catch((err) => {
                 console.warn('Unable to mark unavailable slots', err);
             });
+
+            if (cur_list?.page) {
+                const primaryActionLabel = __('Add Patient Appointment');
+                cur_list.page.set_primary_action(primaryActionLabel, () => {
+                    if (typeof check_and_set_availability === 'function') {
+                        const defaultEvent = {
+                            appointment_date: frappe.datetime.get_today(),
+                            duration: 30
+                        };
+                        check_and_set_availability(defaultEvent, true);
+                    } else {
+                        frappe.new_doc('Patient Appointment');
+                    }
+                });
+            }
         }
     },
 
@@ -761,7 +772,8 @@ frappe.views.calendar["Patient Appointment"] = {
         // Right-click should take the user straight to editing the appointment
         element.addEventListener('contextmenu', function (e) {
             e.preventDefault();
-            appointmentActions.editAppointment(event.id);
+            frappe.views.calendar["Patient Appointment"].handleAppointmentClick(info);
+            // appointmentActions.editAppointment(event.id);
         });
 
         // Allow status badge click to open quick status shortcuts
@@ -837,7 +849,7 @@ frappe.views.calendar["Patient Appointment"] = {
 
     // Build and display the contextual action menu
     showActionsMenu: function (event, anchor, focusSection) {
-        const menuId = CONTEXT_MENU_ID;
+        const menuId = 'patient-appointment-action-menu';
         const existingMenu = $(`#${menuId}`);
         if (existingMenu.length) {
             existingMenu.remove();
@@ -942,10 +954,10 @@ frappe.views.calendar["Patient Appointment"] = {
             e.preventDefault();
             const actionKey = $(this).data('action');
             const handler = appointmentActions[actionKey];
+            closeMenu();
             if (typeof handler === 'function') {
                 await handler(event.id, event.extendedProps, focusSection);
             }
-            closeMenu();
         });
     },
 
@@ -1472,100 +1484,6 @@ function formatUserName(user) {
     }
 }
 
-async function loadAvailableServices(appointment) {
-    frappe.call({
-        method: 'frappe.client.get_list',
-        args: {
-            doctype: 'Healthcare Service Template',
-            fields: ['name', 'service_name', 'base_price']
-        },
-        callback: function (r) {
-            console.log(document)
-            const container = document.getElementById('available-services');
-            container.innerHTML = '';
-            r.message.forEach(service => {
-                const card = document.createElement('div');
-                card.className = 'service-card bg-white shadow-sm hover:shadow-md transition p-3 rounded-lg cursor-pointer border';
-                card.draggable = true;
-                card.dataset.service = service.name;
-                card.innerHTML = `
-              <div class="font-medium">${service.service_name}</div>
-              <div class="text-xs text-gray-500">${service.base_price} BHD</div>
-            `;
-                card.addEventListener('click', () => addServiceToSelection(service, appointment));
-                container.appendChild(card);
-            });
-        }
-    });
-
-}
-
-async function renderSelectedServices(appointment) {
-    const container = document.getElementById('selected-services');
-    console.log($('#selected-services'))
-    container.innerHTML = '';
-
-    const res = await frappe.call({
-        method: 'frappe.client.get',
-        args: { doctype: 'Patient Appointment', name: appointment.name }
-    });
-
-    const services = res.message.appointment_services || [];
-    let patientTotal = 0, insuranceTotal = 0;
-
-    services.forEach((srv, idx) => {
-        const card = document.createElement('div');
-        card.className = 'selected-service bg-white shadow-sm p-3 rounded-lg flex justify-between items-center';
-        card.innerHTML = `
-      <div>
-        <div class="font-medium">${srv.service}</div>
-        <div class="text-xs text-gray-500">Practitioner: ${appointment.practitioner}</div>
-      </div>
-      <div class="text-right">
-        ${appointment.billing_type === 'Insurance' ? `
-          <div class="text-xs text-blue-600">Insurance: ${srv.insurance_share || 0}</div>
-          <div class="text-xs text-amber-600">Patient: ${srv.patient_share || 0}</div>
-        ` : `<div class="font-semibold">${srv.price} BHD</div>`}
-      </div>
-    `;
-        container.appendChild(card);
-
-        if (appointment.billing_type === 'Insurance') {
-            patientTotal += srv.patient_share || 0;
-            insuranceTotal += srv.insurance_share || 0;
-        } else {
-            patientTotal += srv.price || 0;
-        }
-    });
-
-    document.getElementById('patient-total').textContent = patientTotal.toFixed(2);
-    document.getElementById('insurance-total').textContent = insuranceTotal.toFixed(2);
-    document.getElementById('total-price').textContent = (patientTotal + insuranceTotal).toFixed(2);
-}
-
-async function addServiceToSelection(service, appointment) {
-    await frappe.call({
-        method: 'frappe.client.insert',
-        args: {
-            doc: {
-                doctype: 'Appointment Service',
-                parent: appointment.name,
-                parenttype: 'Patient Appointment',
-                parentfield: 'appointment_services',
-                service: service.name
-            }
-        }
-    });
-    await renderSelectedServices(appointment);
-}
-
-async function generateAppointmentInvoice(appointment) {
-    await frappe.call({
-        method: 'your_app.api.create_invoice_for_appointment',
-        args: { appointment: appointment.name }
-    });
-}
-
 const appointmentActions = {
     // Common helpers ---------------------------------------------------------
     async fetchAppointmentFields(appointmentId, fields = []) {
@@ -1593,8 +1511,7 @@ const appointmentActions = {
     },
 
     async openBillingInterface(appointmentId) {
-        const appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
-
+        let appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
         const isInsurance = (appt.custom_payment_type || '').toLowerCase().includes('insur');
 
         const dialog = new frappe.ui.Dialog({
@@ -1603,14 +1520,35 @@ const appointmentActions = {
             primary_action_label: __('Generate Invoices'),
             primary_action: async () => {
                 try {
-                    await frappe.call({
+                    const { message: result } = await frappe.call({
                         method: 'do_health.api.methods.create_invoices_for_appointment',
                         args: { appointment_id: appt.name, submit_invoice: 0 },
                         freeze: true,
                         freeze_message: __('Creating invoice(s)...')
                     });
-                    dialog.hide();
-                    frappe.show_alert({ message: __('Invoice(s) created successfully'), indicator: 'green' });
+                    const info = result || {};
+                    const alerts = [];
+                    if (info.patient_invoice) {
+                        alerts.push(
+                            info.patient_invoice_updated
+                                ? __('Patient invoice {0} updated.', [info.patient_invoice])
+                                : __('Patient invoice {0} created.', [info.patient_invoice])
+                        );
+                    }
+                    if (info.insurance_invoice) {
+                        alerts.push(
+                            info.insurance_invoice_updated
+                                ? __('Insurance invoice {0} updated.', [info.insurance_invoice])
+                                : __('Insurance invoice {0} created.', [info.insurance_invoice])
+                        );
+                    }
+                    if (!alerts.length) {
+                        alerts.push(__('Billing synchronised.'));
+                    }
+                    frappe.show_alert({ message: alerts.join(' '), indicator: 'green' });
+                    appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+                    await refreshAppointmentItemsUI(appt.name);
+                    await loadPolicySummary(appt.patient, appt.company);
                     appointmentActions.refreshCalendar();
                 } catch (e) {
                     console.error(e);
@@ -1619,79 +1557,133 @@ const appointmentActions = {
         });
 
         dialog.$body.html(`
-        <div class="billing-ui grid" style="grid-template-columns: 1fr 1.2fr; gap:16px; min-height:520px;">
-            <!-- Add Item -->
-            <div class="bg-gray-50 rounded-xl border p-12" style="padding:16px;">
-                <div class="flex items-center justify-between">
+        <div class="billing-shell" style="display:flex; gap:18px; align-items:flex-start;">
+            <aside class="billing-side" style="width:320px; display:flex; flex-direction:column; gap:16px;">
+                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
                     <h5 class="font-semibold m-0">${__('Add Item')}</h5>
-                </div>
-                <div class="mt-3">
-                    <div class="form-row" style="display:flex; gap:8px; align-items:center;">
+                    <div class="mt-3" style="display:flex; gap:8px; align-items:center;">
                         <div style="flex:1;" id="bill-item-link-wrapper"></div>
                         <div style="width:110px; margin-top:10px;">
                             <input type="number" id="bill-item-qty" class="form-control" min="1" step="1" value="1" />
                         </div>
-                        <div style="margin-top:7px;">
+                        <div style="margin-top:10px;">
                             <button class="btn btn-primary" id="bill-add-item">${__('Add')}</button>
                         </div>
                     </div>
-                </div>
-            </div>
+                </section>
 
-            <!-- Selected Items & Totals -->
-            <div class="rounded-xl border p-12" style="padding:16px;">
-                <div class="flex items-center justify-between">
-                    <h5 class="font-semibold m-0">${__('Appointment Items')}</h5>
-                    <span class="badge badge-${isInsurance ? 'info' : 'secondary'}">
-                        ${isInsurance ? __('Insurance') : __('Self Payment')}
-                    </span>
-                </div>
-
-                <div id="bill-items-table" class="table-responsive mt-3"></div>
-
-                <hr class="my-3"/>
-
-                <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 16px;">
-                    <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                        <div class="text-sm text-muted mb-1">${__('Patient Share')}</div>
-                        <div id="patient-total" class="h4 m-0">0.00</div>
+                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+                    <div>
+                        <label class="form-label text-muted small mb-1">${__('Payment Type')}</label>
+                        <select id="payment-type-select" class="form-control">
+                            <option value="Self Payment">${__('Self Payment')}</option>
+                            <option value="Insurance">${__('Insurance')}</option>
+                        </select>
                     </div>
-                    <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                        <div class="text-sm text-muted mb-1">${__('Insurance Share')}</div>
-                        <div id="insurance-total" class="h4 m-0">0.00</div>
+                    <div style="height:1px;background:#f1f5f9;"></div>
+                    <div>
+                        <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                            <span class="font-semibold">${__('Insurance Policy')}</span>
+                            <button class="btn btn-sm btn-outline-primary" id="btn-manage-policy">${__('Manage')}</button>
+                        </div>
+                        <div id="policy-summary" class="text-sm text-muted mt-2">${__('Loading...')}</div>
                     </div>
-                </div>
+                </section>
+            </aside>
 
-                <div class="rounded-lg p-3 mt-3" style="border:2px dashed #e5e7eb;">
-                    <div class="text-sm text-muted mb-1">${__('Grand Total')}</div>
-                    <div id="grand-total" class="h4 m-0">0.00</div>
-                </div>
-            </div>
+            <section class="billing-main" style="flex:1; display:flex; flex-direction:column; gap:16px;">
+                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div class="flex items-center justify-between flex-wrap" style="gap:8px;">
+                        <h5 class="font-semibold m-0">${__('Appointment Items')}</h5>
+                        <span class="badge badge-${isInsurance ? 'info' : 'secondary'}">
+                            ${isInsurance ? __('Insurance') : __('Self Payment')}
+                        </span>
+                    </div>
+                    <div id="bill-items-table" class="table-responsive mt-3"></div>
+                </section>
 
-            <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 16px; margin-top:16px;">
-                <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                    <div class="text-sm text-muted mb-1">${__('Patient Billing Status')}</div>
-                    <div id="patient-status" class="badge badge-secondary">Loading...</div>
-                </div>
-                <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                    <div class="text-sm text-muted mb-1">${__('Insurance Claim Status')}</div>
-                    <div id="insurance-status" class="badge badge-info">Loading...</div>
-                </div>
-            </div>
+                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
+                        <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                            <div class="text-sm text-muted mb-1">${__('Patient Invoice')}</div>
+                            <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                <span id="patient-invoice-link" class="font-medium"></span>
+                                <button class="btn btn-sm btn-outline-primary" id="btn-record-payment">${__('Record Payment')}</button>
+                            </div>
+                            <div class="text-sm text-muted mt-2">${__('Outstanding')}: <span id="patient-outstanding">0.00</span></div>
+                        </div>
+                        ${isInsurance ? `
+                        <div class="rounded-lg p-3" id="insurance-claim-card" style="border:1px solid #e5e7eb;">
+                            <div class="text-sm text-muted mb-1">${__('Insurance Claim')}</div>
+                            <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                <span id="insurance-claim-summary" class="text-muted">${__('No claim yet')}</span>
+                                <button class="btn btn-sm btn-warning" disabled id="btn-insurance-claim">${__('Submit Claim')}</button>
+                            </div>
+                        </div>` : ''}
+                    </div>
+                </section>
+
+                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
+                        <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                            <div class="text-sm text-muted mb-1">${__('Patient Billing Status')}</div>
+                            <div id="patient-status" class="badge badge-secondary">Loading...</div>
+                        </div>
+                        ${isInsurance ? `
+                        <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                            <div class="text-sm text-muted mb-1">${__('Insurance Claim Status')}</div>
+                            <div id="insurance-status" class="badge badge-info">Loading...</div>
+                        </div>` : ''}
+                    </div>
+                </section>
+            </section>
         </div>
     `);
 
         dialog.show();
 
-        // --- wire up controls ---
+        // --- Auto-select payment type based on active insurance ---
+        try {
+            const { message: activePolicy } = await frappe.call({
+                method: 'do_health.api.methods.get_active_insurance_policy_summary',
+                args: {
+                    patient: appt.patient,
+                    company: appt.company,
+                    on_date: appt.appointment_date || appt.posting_date || frappe.datetime.get_today(),
+                },
+            });
+
+            const ptSelect = document.querySelector('#payment-type-select');
+            if (activePolicy && activePolicy.name) {
+                // If an active policy exists, switch to Insurance automatically
+                ptSelect.value = 'Insurance';
+                await frappe.db.set_value('Patient Appointment', appt.name, 'custom_payment_type', 'Insurance');
+                frappe.show_alert({ message: __('Payment type set to Insurance (active policy detected)'), indicator: 'blue' });
+            } else {
+                // Otherwise default to Self Payment
+                ptSelect.value = 'Self Payment';
+                await frappe.db.set_value('Patient Appointment', appt.name, 'custom_payment_type', 'Self Payment');
+            }
+        } catch (error) {
+            console.warn('Failed to auto-detect insurance policy:', error);
+        }
+
         const el = dialog.$wrapper.get(0);
         const qtyInput = el.querySelector('#bill-item-qty');
         const addBtn = el.querySelector('#bill-add-item');
 
-        // Create a proper Link field for Item
+        await loadPolicySummary(appt.patient, appt.company);
+        await refreshAppointmentItemsUI(appt.name);
+
+        // Link field for item
         let chosenItemCode = null;
+        const itemParent = $(el).find('#bill-item-link-wrapper');
+        if (!itemParent.length) {
+            console.warn('Billing item wrapper not found');
+            return;
+        }
         const itemLink = frappe.ui.form.make_control({
-            parent: el.querySelector('#bill-item-link-wrapper'),
+            parent: itemParent,
             df: {
                 fieldtype: 'Link',
                 fieldname: 'item_code',
@@ -1704,6 +1696,17 @@ const appointmentActions = {
         });
         itemLink.refresh();
 
+        // Change payment type
+        const ptSelect = el.querySelector('#payment-type-select');
+        ptSelect.value = appt.custom_payment_type || 'Self Payment';
+        ptSelect.addEventListener('change', async () => {
+            await frappe.db.set_value('Patient Appointment', appt.name, 'custom_payment_type', ptSelect.value);
+            appt.custom_payment_type = ptSelect.value;
+            frappe.show_alert({ message: __('Payment type updated'), indicator: 'green' });
+            await refreshAppointmentItemsUI(appt.name);
+        });
+
+        // Add item
         addBtn.addEventListener('click', async () => {
             const qty = cint(qtyInput.value || 1);
             const item_code = chosenItemCode || itemLink.get_value();
@@ -1712,7 +1715,6 @@ const appointmentActions = {
                 return;
             }
             await addAppointmentItem(appt.name, item_code, qty);
-            // reset
             itemLink.set_value('');
             chosenItemCode = null;
             qtyInput.value = '1';
@@ -1744,6 +1746,215 @@ const appointmentActions = {
             });
         }
 
+        async function loadPolicySummary(patient, company) {
+            const summaryEl = el.querySelector('#policy-summary');
+            const manageBtn = el.querySelector('#btn-manage-policy');
+            summaryEl.textContent = __('Checking policy...');
+
+            try {
+                const { message } = await frappe.call({
+                    method: 'do_health.api.methods.get_active_insurance_policy_summary',
+                    args: {
+                        patient,
+                        company: company || null,
+                        on_date: appt.appointment_date || appt.posting_date || frappe.datetime.get_today()
+                    }
+                });
+                if (message && message.name) {
+                    const expiry = message.policy_expiry_date
+                        ? frappe.datetime.str_to_user(message.policy_expiry_date)
+                        : __('No expiry date');
+                    const plan = message.insurance_plan || __('No plan');
+                    summaryEl.textContent = `${message.insurance_payor || __('Insurance Payor')} • ${plan} (${__('Expires')}: ${expiry})`;
+                    manageBtn.onclick = () => openPolicyManager(message);
+                } else {
+                    summaryEl.textContent = __('No active insurance policy');
+                    manageBtn.onclick = () => openPolicyManager(null);
+                }
+            } catch (err) {
+                console.error(err);
+                summaryEl.textContent = __('Unable to load policy information');
+                manageBtn.onclick = () => openPolicyManager(null);
+            }
+        }
+
+        async function openPolicyEditor(policyName = null, opts = {}) {
+            let baseDoc = null;
+            if (policyName) {
+                baseDoc = await frappe.db.get_doc('Patient Insurance Policy', policyName);
+            }
+
+            const isRenew = !!opts.renew;
+            const dialogTitle = policyName
+                ? (isRenew ? __('Renew Insurance Policy') : __('Edit Insurance Policy'))
+                : __('Add Insurance Policy');
+
+            const defaultExpiry = isRenew && baseDoc?.policy_expiry_date
+                ? frappe.datetime.add_months(baseDoc.policy_expiry_date, 12)
+                : (baseDoc?.policy_expiry_date || frappe.datetime.get_today());
+
+            const policyDialog = new frappe.ui.Dialog({
+                title: dialogTitle,
+                fields: [
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'insurance_payor',
+                        label: __('Insurance Payor'),
+                        options: 'Insurance Payor',
+                        reqd: 1,
+                        default: baseDoc?.insurance_payor || ''
+                    },
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'insurance_plan',
+                        label: __('Insurance Plan'),
+                        options: 'Insurance Payor Eligibility Plan',
+                        default: baseDoc?.insurance_plan || ''
+                    },
+                    {
+                        fieldtype: 'Data',
+                        fieldname: 'policy_number',
+                        label: __('Policy Number'),
+                        reqd: 1,
+                        default: baseDoc?.policy_number || ''
+                    },
+                    {
+                        fieldtype: 'Date',
+                        fieldname: 'policy_expiry_date',
+                        label: __('Policy Expiry Date'),
+                        reqd: 1,
+                        default: defaultExpiry
+                    }
+                ],
+                primary_action_label: policyName && !isRenew ? __('Save Changes') : __('Save Policy'),
+                primary_action: async (values) => {
+                    try {
+                        if (policyName && !isRenew) {
+                            await frappe.call({
+                                method: 'do_health.api.methods.update_patient_insurance_policy',
+                                args: {
+                                    policy_name: policyName,
+                                    insurance_payor: values.insurance_payor,
+                                    insurance_plan: values.insurance_plan,
+                                    policy_number: values.policy_number,
+                                    policy_expiry_date: values.policy_expiry_date,
+                                }
+                            });
+                        } else {
+                            await frappe.call({
+                                method: 'do_health.api.methods.create_patient_insurance_policy',
+                                args: {
+                                    patient: appt.patient,
+                                    insurance_payor: values.insurance_payor,
+                                    insurance_plan: values.insurance_plan,
+                                    policy_number: values.policy_number,
+                                    policy_expiry_date: values.policy_expiry_date,
+                                }
+                            });
+                        }
+
+                        frappe.show_alert({ message: __('Insurance policy saved'), indicator: 'green' });
+                        policyDialog.hide();
+                        await loadPolicySummary(appt.patient, appt.company);
+                        if (typeof opts.onSuccess === 'function') {
+                            opts.onSuccess();
+                        }
+                    } catch (error) {
+                        console.error(error);
+                    }
+                }
+            });
+
+            policyDialog.show();
+        }
+
+        async function openPolicyManager(activePolicySummary) {
+            const { message: policies } = await frappe.call({
+                method: 'do_health.api.methods.list_patient_insurance_policies',
+                args: { patient: appt.patient }
+            });
+
+            const manager = new frappe.ui.Dialog({
+                title: __('Manage Insurance Policies'),
+                size: 'large'
+            });
+
+            const rows = (policies || []).map(policy => {
+                const expiryText = policy.policy_expiry_date
+                    ? frappe.datetime.str_to_user(policy.policy_expiry_date)
+                    : __('No expiry date');
+                const diff = policy.policy_expiry_date
+                    ? frappe.datetime.get_diff(policy.policy_expiry_date, frappe.datetime.get_today())
+                    : 1;
+                const isActive = diff >= 0 && policy.docstatus === 1;
+                const statusBadge = isActive
+                    ? `<span class="badge badge-success">${__('Active')}</span>`
+                    : `<span class="badge badge-secondary">${__('Expired')}</span>`;
+
+                return `
+                    <tr data-policy="${policy.name}">
+                        <td>${policy.policy_number || policy.name}</td>
+                        <td>${frappe.utils.escape_html(policy.insurance_payor || '')}</td>
+                        <td>${frappe.utils.escape_html(policy.insurance_plan || __('—'))}</td>
+                        <td>${expiryText}</td>
+                        <td>${statusBadge}</td>
+                        <td class="text-right" style="white-space:nowrap; display:flex; gap:6px; justify-content:flex-end;">
+                            <button class="btn btn-xs btn-secondary js-edit-policy" data-policy="${policy.name}">${__('Edit')}</button>
+                            <button class="btn btn-xs btn-outline-primary js-renew-policy" data-policy="${policy.name}">${__('Renew')}</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            manager.$body.html(`
+                <div>
+                    ${(policies || []).length ? `
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>${__('Policy')}</th>
+                                        <th>${__('Payor')}</th>
+                                        <th>${__('Plan')}</th>
+                                        <th>${__('Expiry')}</th>
+                                        <th>${__('Status')}</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${rows}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : `<div class="text-muted">${__('No insurance policies found for this patient.')}</div>`}
+
+                    <div class="mt-4" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-primary" id="btn-add-policy">${__('Add Policy')}</button>
+                        ${activePolicySummary ? `<span class="text-muted small">${__('Active policy')}: ${frappe.utils.escape_html(activePolicySummary.policy_number || activePolicySummary.name)}</span>` : ''}
+                    </div>
+                </div>
+            `);
+
+            manager.$body.find('#btn-add-policy').on('click', () => {
+                manager.hide();
+                openPolicyEditor(null, { onSuccess: () => openPolicyManager(null) });
+            });
+
+            manager.$body.find('.js-edit-policy').on('click', (e) => {
+                const name = e.currentTarget.getAttribute('data-policy');
+                manager.hide();
+                openPolicyEditor(name, { onSuccess: () => openPolicyManager(null) });
+            });
+
+            manager.$body.find('.js-renew-policy').on('click', (e) => {
+                const name = e.currentTarget.getAttribute('data-policy');
+                manager.hide();
+                openPolicyEditor(name, { renew: true, onSuccess: () => openPolicyManager(null) });
+            });
+
+            manager.show();
+        }
+
         async function refreshAppointmentItemsUI(appointment) {
             const { message } = await frappe.call({
                 method: 'do_health.api.methods.get_appointment_items_snapshot',
@@ -1751,66 +1962,291 @@ const appointmentActions = {
             });
 
             const tblWrap = el.querySelector('#bill-items-table');
-            if (!message || !Array.isArray(message.rows)) {
-                tblWrap.innerHTML = '<div class="text-muted small">No items yet.</div>';
+            if (!tblWrap) {
                 return;
             }
+            const currency = (message && message.currency) || 'BHD';
+            const isInsurancePayment = (appt.custom_payment_type || '').toLowerCase().includes('insur');
 
-            tblWrap.innerHTML = `
-            <table class="table table-sm table-bordered">
-                <thead>
-                    <tr>
-                        <th style="width:32%;">${__('Item')}</th>
-                        <th style="width:10%;">${__('Qty')}</th>
-                        <th style="width:14%;">${__('Rate')}</th>
-                        <th style="width:14%;">${__('Patient')}</th>
-                        <th style="width:14%;">${__('Insurance')}</th>
-                        <th style="width:16%;">${__('Amount')}</th>
-                        <th style="width:8%;"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${message.rows.map(r => `
+            if (!message || !Array.isArray(message.rows) || !message.rows.length) {
+                tblWrap.innerHTML = `<div class="text-muted small">${__('No items yet.')}</div>`;
+            } else {
+                const header = isInsurancePayment
+                    ? `
+                        <th>${__('Item')}</th>
+                        <th>${__('Qty')}</th>
+                        <th>${__('Rate')}</th>
+                        <th>${__('Patient')}</th>
+                        <th>${__('Insurance')}</th>
+                        <th>${__('Total')}</th>
+                        <th></th>`
+                    : `
+                        <th>${__('Item')}</th>
+                        <th>${__('Qty')}</th>
+                        <th>${__('Rate')}</th>
+                        <th>${__('Total')}</th>
+                        <th></th>`;
+
+                const bodyRows = message.rows.map(r => {
+                    const qtyInput = `<input type="number" min="1" step="1" class="form-control form-control-sm js-qty" value="${r.qty}">`;
+                    if (isInsurancePayment) {
+                        return `
+                            <tr data-row="${r.name}">
+                                <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
+                                <td>${qtyInput}</td>
+                                <td>${format_currency(r.rate || 0, currency)}</td>
+                                <td>${format_currency(r.patient_share || 0, currency)}</td>
+                                <td>${format_currency(r.insurance_share || 0, currency)}</td>
+                                <td>${format_currency(r.amount || 0, currency)}</td>
+                                <td class="text-center">
+                                    <button class="btn btn-xs btn-danger js-del">&times;</button>
+                                </td>
+                            </tr>`;
+                    }
+                    return `
                         <tr data-row="${r.name}">
                             <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
-                            <td><input type="number" min="1" step="1" class="form-control form-control-sm js-qty" value="${r.qty}"></td>
-                            <td>${format_currency(r.rate || 0, message.currency || 'BHD')}</td>
-                            <td>${format_currency(r.patient_share || 0, message.currency || 'BHD')}</td>
-                            <td>${format_currency(r.insurance_share || 0, message.currency || 'BHD')}</td>
-                            <td>${format_currency(r.amount || 0, message.currency || 'BHD')}</td>
+                            <td>${qtyInput}</td>
+                            <td>${format_currency(r.rate || 0, currency)}</td>
+                            <td>${format_currency(r.amount || 0, currency)}</td>
                             <td class="text-center">
                                 <button class="btn btn-xs btn-danger js-del">&times;</button>
                             </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
+                        </tr>`;
+                }).join('');
 
-            el.querySelector('#patient-total').textContent = format_currency(message.totals.patient || 0, message.currency || 'BHD');
-            el.querySelector('#insurance-total').textContent = format_currency(message.totals.insurance || 0, message.currency || 'BHD');
-            el.querySelector('#grand-total').textContent = format_currency(message.totals.grand || 0, message.currency || 'BHD');
+                const totalsRow = isInsurancePayment
+                    ? `
+                        <tr class="table-total" style="background:#f8fafc;">
+                            <td colspan="3" class="text-right font-weight-bold">${__('Totals')}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.patient || 0, currency)}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.insurance || 0, currency)}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.grand || 0, currency)}</td>
+                            <td></td>
+                        </tr>`
+                    : `
+                        <tr class="table-total" style="background:#f8fafc;">
+                            <td colspan="3" class="text-right font-weight-bold">${__('Totals')}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.grand || 0, currency)}</td>
+                            <td></td>
+                        </tr>`;
+
+                tblWrap.innerHTML = `
+                    <table class="table table-sm table-bordered billing-items-table">
+                        <thead>
+                            <tr>${header}</tr>
+                        </thead>
+                        <tbody>
+                            ${bodyRows}
+                        </tbody>
+                        <tfoot>
+                            ${totalsRow}
+                        </tfoot>
+                    </table>
+                `;
+
+                tblWrap.querySelectorAll('tbody tr[data-row]').forEach(tr => {
+                    const rowname = tr.getAttribute('data-row');
+                    tr.querySelector('.js-del').addEventListener('click', async () => {
+                        await removeAppointmentItem(rowname);
+                        await refreshAppointmentItemsUI(appt.name);
+                    });
+                    tr.querySelector('.js-qty').addEventListener('change', async (e) => {
+                        const q = cint(e.target.value || 1);
+                        await updateAppointmentItemQty(rowname, q);
+                        await refreshAppointmentItemsUI(appt.name);
+                    });
+                });
+            }
 
             const apptDoc = await frappe.db.get_doc('Patient Appointment', appointment);
-            el.querySelector('#patient-status').textContent = apptDoc.custom_billing_status || 'Not Billed';
-            el.querySelector('#insurance-status').textContent = apptDoc.custom_insurance_status || 'Not Claimed';
+            const patientStatusEl = el.querySelector('#patient-status');
+            if (patientStatusEl) {
+                patientStatusEl.textContent = apptDoc.custom_billing_status || __('Not Billed');
+            }
 
-            tblWrap.querySelectorAll('tr[data-row]').forEach(tr => {
-                const rowname = tr.getAttribute('data-row');
-                tr.querySelector('.js-del').addEventListener('click', async () => {
-                    await removeAppointmentItem(rowname);
-                    await refreshAppointmentItemsUI(appt.name);
-                });
-                tr.querySelector('.js-qty').addEventListener('change', async (e) => {
-                    const q = cint(e.target.value || 1);
-                    await updateAppointmentItemQty(rowname, q);
-                    await refreshAppointmentItemsUI(appt.name);
-                });
-            });
+            const insuranceStatusEl = el.querySelector('#insurance-status');
+            if (insuranceStatusEl) {
+                insuranceStatusEl.textContent = isInsurancePayment
+                    ? (apptDoc.custom_insurance_status || __('Not Claimed'))
+                    : __('Not Applicable');
+            }
+
+            const invoiceLinkEl = el.querySelector('#patient-invoice-link');
+            const outstandingEl = el.querySelector('#patient-outstanding');
+            if (apptDoc.ref_sales_invoice) {
+                invoiceLinkEl.innerHTML = `<a href="/app/sales-invoice/${apptDoc.ref_sales_invoice}" target="_blank">${apptDoc.ref_sales_invoice}</a>`;
+                const inv = await frappe.db.get_doc('Sales Invoice', apptDoc.ref_sales_invoice);
+                outstandingEl.textContent = format_currency(inv.outstanding_amount, inv.currency || currency);
+            } else {
+                invoiceLinkEl.textContent = '—';
+                outstandingEl.textContent = format_currency(0, currency);
+            }
+
+            const claimSummaryEl = el.querySelector('#insurance-claim-summary');
+            if (claimSummaryEl) {
+                if (apptDoc.custom_insurance_sales_invoice) {
+                    claimSummaryEl.innerHTML = __(`Linked invoice: <a href="/app/sales-invoice/${apptDoc.custom_insurance_sales_invoice}" target="_blank">
+                    ${apptDoc.custom_insurance_sales_invoice}</a>`);
+                    // claimSummary.innerHTML = `<a href="/app/Sales Invoice/${apptDoc.custom_insurance_sales_invoice}">
+                    // ${apptDoc.custom_insurance_sales_invoice}</a>`;
+                } else {
+                    claimSummaryEl.textContent = __('No claim yet');
+                }
+            }
         }
 
+        // Record payment button
+        el.querySelector('#btn-record-payment')?.addEventListener('click', async () => {
+            if (!appt.ref_sales_invoice) return;
+            const invoiceDoc = await frappe.db.get_doc('Sales Invoice', appt.ref_sales_invoice);
+
+            const defaultMOP = 'Cash';
+            const outstanding = invoiceDoc.outstanding_amount ?? invoiceDoc.grand_total;
+
+            const paymentDialog = new frappe.ui.Dialog({
+                title: __('Record Payment'),
+                fields: [
+                    {
+                        fieldtype: 'Table',
+                        fieldname: 'payments',
+                        label: __('Payments'),
+                        reqd: 1,
+                        in_place_edit: true,
+                        data: [],
+                        fields: [
+                            {
+                                fieldtype: 'Link',
+                                fieldname: 'mode_of_payment',
+                                options: 'Mode of Payment',
+                                in_list_view: 1,
+                                reqd: 1,
+                                label: __('Mode of Payment'),
+                            },
+                            {
+                                fieldtype: 'Currency',
+                                fieldname: 'amount',
+                                in_list_view: 1,
+                                reqd: 1,
+                                label: __('Amount'),
+                            },
+                            {
+                                fieldtype: 'Data',
+                                fieldname: 'reference_no',
+                                in_list_view: 1,
+                                label: __('Reference No'),
+                            },
+                        ],
+                    },
+                    {
+                        fieldtype: 'Date',
+                        fieldname: 'posting_date',
+                        label: __('Posting Date'),
+                        default: frappe.datetime.now_date(),
+                        reqd: 1,
+                    },
+                    {
+                        fieldtype: 'Check',
+                        fieldname: 'submit_invoice',
+                        label: __('Submit Invoice'),
+                        default: 1,
+                    },
+                ],
+                primary_action_label: __('Submit'),
+                primary_action: async (values) => {
+                    const paymentRows = (values.payments || []).filter(row => row.mode_of_payment && flt(row.amount) > 0);
+                    if (!paymentRows.length) {
+                        frappe.msgprint(__('Please add at least one payment row with an amount.'));
+                        return;
+                    }
+                    await frappe.call({
+                        method: 'do_health.api.methods.record_sales_invoice_payment',
+                        args: {
+                            invoice: invoiceDoc.name,
+                            payments: paymentRows,
+                            posting_date: values.posting_date,
+                            submit_invoice: values.submit_invoice ? 1 : 0,
+                        },
+                        freeze: true,
+                        freeze_message: __('Recording payment...'),
+                    });
+                    frappe.show_alert({ message: __('Payments recorded on invoice {0}.', [invoiceDoc.name]), indicator: 'green' });
+                    paymentDialog.hide();
+                    appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+                    await refreshAppointmentItemsUI(appt.name);
+                },
+            });
+
+            paymentDialog.show();
+
+            const paymentsField = paymentDialog.fields_dict.payments;
+            paymentsField.df.data = [{
+                mode_of_payment: defaultMOP,
+                amount: outstanding,
+                reference_no: '',
+            }];
+            paymentsField.grid.refresh();
+        });
+
+        // Insurance Claim button
+        el.querySelector('#btn-insurance-claim')?.addEventListener('click', async () => {
+            const inv = appt.custom_insurance_sales_invoice;
+            if (!inv) {
+                frappe.show_alert({ message: __('No insurance invoice found'), indicator: 'orange' });
+                return;
+            }
+            const { message: claimName } = await frappe.call({
+                method: 'do_health.api.methods.create_or_update_insurance_claim',
+                args: { appointment: appt.name, invoice: inv }
+            });
+            frappe.show_alert({
+                message: claimName
+                    ? __('Insurance claim {0} prepared.', [claimName])
+                    : __('Insurance coverage prepared for claim.'),
+                indicator: 'green'
+            });
+            appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+            await refreshAppointmentItemsUI(appt.name);
+        });
+
+        // Auto-refresh billing summary every 60s
+        setInterval(async () => {
+            await refreshAppointmentItemsUI(appt.name);
+        }, 60000);
+
+        // Inside refreshAppointmentItemsUI
+        const patientStatusEl = el.querySelector('#patient-status');
+        if (patientStatusEl) {
+            const status = apptDoc.custom_billing_status || __('Not Billed');
+            patientStatusEl.textContent = status;
+            const map = {
+                'Paid': 'success',
+                'Partially Paid': 'warning',
+                'Not Paid': 'info',
+                'Cancelled': 'danger',
+                'Not Billed': 'secondary',
+            };
+            patientStatusEl.className = `badge badge-${map[status] || 'secondary'}`;
+        }
+
+        const insuranceStatusEl = el.querySelector('#insurance-status');
+        if (insuranceStatusEl) {
+            const status = isInsurancePayment ? (apptDoc.custom_insurance_status || __('Not Claimed')) : __('N/A');
+            insuranceStatusEl.textContent = status;
+            const map = {
+                'Claimed': 'info',
+                'Approved': 'success',
+                'Rejected': 'danger',
+                'Paid': 'primary',
+                'Not Claimed': 'secondary',
+            };
+            insuranceStatusEl.className = `badge badge-${map[status] || 'secondary'}`;
+        }
+
+        await loadPolicySummary(appt.patient, appt.company);
         await refreshAppointmentItemsUI(appt.name);
     },
+
 
     async pinPatientToSidebar(appointmentId, context = {}) {
         const sidebarApi = window.doHealthSidebar;
@@ -1843,30 +2279,6 @@ const appointmentActions = {
             message: __('Patient pinned to sidebar'),
             indicator: 'green'
         });
-    },
-
-    async updatePaymentType(appointmentId, context = {}) {
-        const defaults = context?.custom_payment_type
-            ? { custom_payment_type: context.custom_payment_type }
-            : await appointmentActions.fetchAppointmentFields(appointmentId, 'custom_payment_type');
-
-        frappe.prompt(
-            {
-                fieldname: 'payment_type',
-                label: __('Payment Type'),
-                fieldtype: 'Select',
-                options: ['', 'Self Payment', 'Insurance'],
-                default: defaults.custom_payment_type || '',
-                reqd: 1,
-            },
-            async (values) => {
-                await frappe.db.set_value('Patient Appointment', appointmentId, 'custom_payment_type', values.payment_type);
-                frappe.show_alert({ message: __('Payment type updated'), indicator: 'green' });
-                this.refreshCalendar();
-            },
-            __('Update Payment Type'),
-            __('Update')
-        );
     },
 
     async addPatientEncounter(appointmentId) {
@@ -1937,55 +2349,204 @@ const appointmentActions = {
         });
     },
 
-    async addVisitReason(appointmentId, context = {}) {
-        const defaults = context?.visit_reason
-            ? { visit_reason: context.visit_reason }
-            : await appointmentActions.fetchAppointmentFields(appointmentId, 'visit_reason');
-
-        frappe.prompt(
-            {
-                fieldname: 'reason',
-                label: __('Visit Reason'),
-                fieldtype: 'Small Text',
-                default: defaults.visit_reason || '',
-                reqd: 1,
-            },
-            async (values) => {
-                await frappe.call({
-                    method: 'do_health.api.methods.update_visit_reason',
-                    args: {
-                        appointment_id: appointmentId,
-                        reason: values.reason,
-                    }
-                });
-                frappe.show_alert({ message: __('Visit reason updated'), indicator: 'green' });
-                this.refreshCalendar();
-            },
-            __('Update Visit Reason'),
-            __('Save')
-        );
-    },
-
     async showVisitLog(appointmentId) {
-        const response = await frappe.call({
-            method: 'do_health.api.methods.get_visit_log',
-            args: { appointment_id: appointmentId },
-        });
+        try {
+            const { message } = await frappe.call({
+                method: 'do_health.api.methods.get_visit_log',
+                args: { appointment_id: appointmentId },
+            });
 
-        if (response.message && response.message.length) {
-            const logHtml = response.message
-                .map(entry => `<div><b>${frappe.datetime.str_to_user(entry.date)}</b> — ${entry.action} ${__('by')} ${entry.user}</div>`)
-                .join('');
+            const data = message || {};
+            const entries = Array.isArray(data.entries) ? data.entries : [];
+
+            if (!entries.length) {
+                frappe.msgprint(__('No visit logs found.'));
+                return;
+            }
+
+            const escapeHtml = frappe.utils?.escape_html || ((value) => {
+                if (value === undefined || value === null) {
+                    return '';
+                }
+                return String(value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            });
+
+            const makeDocLink = (doctype, name, label) => {
+                if (!doctype || !name) {
+                    return escapeHtml(label || name || '');
+                }
+                const safeLabel = escapeHtml(label || name);
+                return `<a href="/app/sales-invoice/${encodeURIComponent(name)}" target="_blank">${safeLabel}</a>`;
+            };
+
+            const STATUS_BADGE_STYLES = {
+                scheduled: { bg: '#D6EAF8', text: '#1A5276' },
+                arrived: { bg: '#FDEBD0', text: '#9C640C' },
+                ready: { bg: '#D5F5E3', text: '#186A3B' },
+                'in room': { bg: '#FCF3CF', text: '#7D6608' },
+                completed: { bg: '#D4EFDF', text: '#145A32' },
+                cancelled: { bg: '#F2F3F4', text: '#515A5A', border: '#D7DBDD' },
+                'no show': { bg: '#FADBD8', text: '#922B21' },
+                transferred: { bg: '#E8DAEF', text: '#6C3483' }
+            };
+
+            const DOC_STATUS_STYLES = {
+                draft: { bg: '#E9ECEF', text: '#495057' },
+                submitted: { bg: '#D6EAF8', text: '#1A5276' },
+                paid: { bg: '#D4EFDF', text: '#145A32' },
+                unpaid: { bg: '#FDEBD0', text: '#9C640C' },
+                overdue: { bg: '#FADBD8', text: '#922B21' },
+                cancelled: { bg: '#F8D7DA', text: '#842029' },
+                'partially paid': { bg: '#FCF3CF', text: '#7D6608' }
+            };
+
+            const DEFAULT_BADGE_STYLE = { bg: '#ADB5BD', text: '#1E1E1E' };
+
+            const buildBadge = (label, style) => {
+                if (!label) {
+                    return '';
+                }
+
+                const { bg, text, border } = style || DEFAULT_BADGE_STYLE;
+                const safeLabel = escapeHtml(label);
+                const borderStyle = border ? `border: 1px solid ${border};` : '';
+                return `<span class="badge ml-2" style="background:${bg};color:${text};${borderStyle}">${safeLabel}</span>`;
+            };
+
+            const resolveStatusBadge = (entry) => {
+                if (!entry?.badge) return '';
+                const key = (entry.badge || '').toLowerCase();
+                const style = STATUS_BADGE_STYLES[key] || DEFAULT_BADGE_STYLE;
+                return buildBadge(entry.badge, style);
+            };
+
+            const resolveDocumentBadge = (entry) => {
+                if (!entry?.badge) return '';
+                const value = (entry.badge || '').toLowerCase();
+
+                let style = DOC_STATUS_STYLES[value];
+                if (!style) {
+                    if (value.includes('partial')) {
+                        style = DOC_STATUS_STYLES['partially paid'];
+                    } else if (value.includes('paid')) {
+                        style = DOC_STATUS_STYLES.paid;
+                    } else if (value.includes('draft')) {
+                        style = DOC_STATUS_STYLES.draft;
+                    } else if (value.includes('submit')) {
+                        style = DOC_STATUS_STYLES.submitted;
+                    } else if (value.includes('overdue')) {
+                        style = DOC_STATUS_STYLES.overdue;
+                    } else if (value.includes('cancel')) {
+                        style = DOC_STATUS_STYLES.cancelled;
+                    }
+                }
+
+                return buildBadge(entry.badge, style || DEFAULT_BADGE_STYLE);
+            };
+
+            const resolveTagBadge = (entry) => {
+                if (!entry?.tag) return '';
+                const key = (entry.tag || '').toLowerCase();
+                let style = { bg: '#EAECEF', text: '#3E444A' };
+                if (key.includes('patient')) {
+                    style = { bg: '#FFF4D3', text: '#705214', border: '#FFE8A3' };
+                } else if (key.includes('insurance')) {
+                    style = { bg: '#E5E4FF', text: '#3C327B', border: '#C9C5FF' };
+                }
+                return buildBadge(entry.tag, style);
+            };
+
+            let lastDateLabel = null;
+            const timelineRows = entries.map((entry) => {
+                const entryDate = entry.date || '';
+                const entryTime = entry.time || '';
+
+                const isNewDate = entryDate && entryDate !== lastDateLabel;
+                const whenParts = [];
+                if (isNewDate && entryDate) {
+                    whenParts.push(escapeHtml(entryDate));
+                }
+                if (entryTime) {
+                    whenParts.push(escapeHtml(entryTime));
+                }
+                const whenLabel = whenParts.length ? whenParts.join(isNewDate ? ' - ' : ' ') : escapeHtml(entryDate || entryTime || '');
+
+                if (entryDate) {
+                    lastDateLabel = entryDate;
+                }
+
+                const title = escapeHtml(entry.title || '');
+                const docLink = entry.doc ? makeDocLink(entry.doc.doctype, entry.doc.name, entry.doc.label || entry.doc.name) : '';
+                const badge = entry.type === 'status' ? resolveStatusBadge(entry) : resolveDocumentBadge(entry);
+                const tag = resolveTagBadge(entry);
+                const description = entry.description ? `<div class="text-muted mt-1">${escapeHtml(entry.description)}</div>` : '';
+
+                const referenceHtml = entry.reference
+                    ? `<div class="text-muted small">${__('Against')}: ${makeDocLink(entry.reference.doctype, entry.reference.name, entry.reference.label || entry.reference.name)}</div>`
+                    : '';
+
+                const extraHtml = Array.isArray(entry.extra)
+                    ? entry.extra
+                        .filter((item) => item && item.label && item.value)
+                        .map((item) => `<div class="text-muted small">${escapeHtml(item.label)}: ${escapeHtml(item.value)}</div>`)
+                        .join('')
+                    : '';
+
+                const userLine = entry.user
+                    ? `<div class="text-muted small">${__('By {0}', [escapeHtml(entry.user)])}</div>`
+                    : '';
+
+                return `
+                    <div class="visit-log-row d-flex mb-3">
+                        <div class="visit-log-time text-muted mr-3 ${isNewDate ? 'font-weight-bold' : ''}">${whenLabel}</div>
+                        <div class="visit-log-body flex-grow-1">
+                            <div class="d-flex align-items-center flex-wrap">
+                                <div class="font-weight-bold">${title}</div>
+                                ${docLink ? `<div>${docLink}</div>` : ''}
+                                ${badge}
+                                ${tag}
+                            </div>
+                            ${description}
+                            ${referenceHtml}
+                            ${extraHtml}
+                            ${userLine}
+                        </div>
+                    </div>`;
+            }).join('');
+
+            const dialogHtml = `
+                <style>
+                    .visit-log-timeline {
+                        max-height: 60vh;
+                        overflow-y: auto;
+                    }
+                    .visit-log-time {
+                        min-width: 140px;
+                    }
+                </style>
+                <div class="visit-log-timeline">
+                    ${timelineRows}
+                </div>`;
 
             frappe.msgprint({
                 title: __('Visit Log'),
-                message: logHtml,
+                message: dialogHtml,
                 indicator: 'blue',
+                wide: true,
             });
-            return;
+        } catch (error) {
+            console.error('Failed to load visit log', error);
+            frappe.msgprint({
+                title: __('Visit Log'),
+                message: __('Unable to load visit log. Please try again.'),
+                indicator: 'red',
+            });
         }
-
-        frappe.msgprint(__('No visit logs found.'));
     },
 };
 
@@ -2052,7 +2613,13 @@ let check_and_set_availability = function (event, is_new = false) {
 
     let selected_slot = event ? event.appointment_time : null;
     let service_unit = null;
-    let duration = event ? event.duration : 30; // default duration
+    let duration = event && event.duration ? parseInt(event.duration, 10) : 30;
+    if (!duration || isNaN(duration)) {
+        duration = 30; // sensible fallback when duration is falsy or invalid
+    }
+    const initialDuration = duration;
+    const initialAppointmentType = event?.appointment_type || '';
+    const initialAppointmentFor = event?.appointment_for || 'Practitioner';
     let add_video_conferencing = null;
     let overlap_appointments = null;
     let appointment_based_on_check_in = false;
@@ -2069,29 +2636,32 @@ let check_and_set_availability = function (event, is_new = false) {
 
     function show_availability() {
         let selected_practitioner = '';
+        let previousAppointmentType = initialAppointmentType;
         let d = new frappe.ui.Dialog({
             title: __('Available slots'),
             fields: [
                 { fieldtype: 'Section Break', label: 'Patient Details', collapsible: 0 },
-                { fieldtype: 'Link', options: 'Patient', reqd: 1, fieldname: 'patient', label: 'Patient', onchange: () => { d.get_primary_btn().attr('disabled', null) } },
-                { fieldtype: 'Data', fieldname: 'patient_name', label: 'Patient Name', read_only: 1, onchange: () => { d.get_primary_btn().attr('disabled', null) } },
+                { fieldtype: 'Link', options: 'Patient', reqd: 1, fieldname: 'patient', label: 'Patient', default: event?.patient ? event.patient : '' },
+                { fieldtype: 'Data', fieldname: 'patient_name', label: 'Patient Name', read_only: 1, default: event?.patient_name ? event.patient_name : '' },
                 { fieldtype: 'Column Break' },
-                { fieldtype: 'Data', fieldname: 'patient_cpr', label: 'CPR', read_only: 1 },
-                { fieldtype: 'Data', fieldname: 'patient_mobile', label: 'Mobile', read_only: 1 },
+                { fieldtype: 'Data', fieldname: 'patient_cpr', label: 'CPR', read_only: 1, default: event?.cpr ? event.cpr : '' },
+                { fieldtype: 'Data', fieldname: 'patient_mobile', label: 'Mobile', read_only: 1, default: event?.mobile ? event.mobile : '' },
                 { fieldtype: 'Section Break' },
-                { fieldtype: 'Select', options: 'First Time\nFollow Up\nProcedure\nSession', reqd: 1, fieldname: 'appointment_category', label: 'Appointment Category' },
-                { fieldtype: 'Link', fieldname: 'appointment_type', options: 'Appointment Type', label: 'Appointment Type', onchange: () => { d.get_primary_btn().attr('disabled', null) } },
-                { fieldtype: 'Data', fieldname: 'appointment_for', label: 'Appointment For', hidden: 1, default: 'Practitioner' },
-                { fieldtype: 'Int', fieldname: 'duration', label: 'Duration', default: duration, onchange: () => { d.get_primary_btn().attr('disabled', null) } },
-                { fieldtype: 'Check', fieldname: 'confirmed', label: 'Confirmed?', onchange: () => { d.get_primary_btn().attr('disabled', null) } },
+                { fieldtype: 'Link', fieldname: 'appointment_type', options: 'Appointment Type', reqd: 1, label: 'Appointment Type', default: initialAppointmentType },
+                { fieldtype: 'Data', fieldname: 'appointment_for', label: 'Appointment For', hidden: 1, default: initialAppointmentFor },
+                { fieldtype: 'Int', fieldname: 'duration', label: 'Duration', default: initialDuration },
+                { fieldtype: 'Select', options: 'First Time\nFollow Up\nProcedure\nSession', fieldname: 'appointment_category', label: 'Appointment Category', default: event?.custom_appointment_category ? event.custom_appointment_category : '' },
+                { fieldtype: 'Link', options: 'Visit Reason', fieldname: 'visit_reason', label: 'Visit Reason', default: event?.visit_reason ? event.visit_reason : '' },
                 { fieldtype: 'Column Break' },
-                { fieldtype: 'Link', fieldname: 'branch', options: 'Branch', label: 'Branch', onchange: () => { d.get_primary_btn().attr('disabled', null) } },
-                { fieldtype: 'Small Text', fieldname: 'notes', label: 'Notes', onchange: () => { d.get_primary_btn().attr('disabled', null) } },
+                { fieldtype: 'Link', fieldname: 'branch', options: 'Branch', label: 'Branch', default: event?.branch ? event.branch : '' },
+                { fieldtype: 'Small Text', fieldname: 'notes', label: 'Notes', default: event?.notes ? event.notes : '' },
+                { fieldtype: 'Check', fieldname: 'reminded', label: 'Reminded?', default: event?.reminded ? event.reminded : '' },
+                { fieldtype: 'Check', fieldname: 'confirmed', label: 'Confirmed?', default: event?.confirmed ? event.confirmed : '' },
                 { fieldtype: 'Section Break' },
                 { fieldtype: 'Link', options: 'Healthcare Practitioner', reqd: 1, fieldname: 'practitioner', label: 'Healthcare Practitioner' },
                 { fieldtype: 'Column Break' },
                 { fieldtype: 'Date', reqd: 1, fieldname: 'appointment_date', label: 'Date', min_date: new Date(frappe.datetime.get_today()) },
-                { fieldtype: 'Section Break' },
+                { fieldtype: 'Section Break', label: 'Available Slots', collapsible: 1 },
                 { fieldtype: 'HTML', fieldname: 'available_slots' },
             ],
             primary_action_label: __('Book'),
@@ -2102,6 +2672,8 @@ let check_and_set_availability = function (event, is_new = false) {
                     'appointment_type': d.get_value('appointment_type'),
                     'appointment_for': d.get_value('appointment_for'),
                     'duration': d.get_value('duration'),
+                    'custom_visit_reason': d.get_value('visit_reason'),
+                    'reminded': d.get_value('reminded'),
                     'custom_confirmed': d.get_value('confirmed'),
                     'custom_branch': d.get_value('branch'),
                     'notes': d.get_value('notes'),
@@ -2129,7 +2701,9 @@ let check_and_set_availability = function (event, is_new = false) {
                         'appointment_type': data.appointment_type,
                         'appointment_for': data.appointment_for,
                         'duration': data.duration,
+                        'reminded': data.reminded,
                         'custom_confirmed': data.custom_confirmed,
+                        'custom_visit_reason': data.custom_visit_reason,
                         'custom_branch': data.custom_branch,
                         'notes': data.notes,
                         'practitioner': data.practitioner,
@@ -2165,7 +2739,6 @@ let check_and_set_availability = function (event, is_new = false) {
                                     indicator: 'red'
                                 });
                             }
-                            d.get_primary_btn().attr('disabled', null);
                         }
                     });
 
@@ -2184,67 +2757,70 @@ let check_and_set_availability = function (event, is_new = false) {
                                     message: __('Failed to get latest document. Please refresh and try again.'),
                                     indicator: 'red'
                                 });
-                                d.get_primary_btn().attr('disabled', null);
                                 return;
                             }
 
-                            let latest_doc = r.message;
-                            let updatePromises = [];
+                            const latest_doc = r.message;
+                            const updateQueue = [];
 
-                            // Check each field and add to update promises if changed
+                            // Check each field and queue sequential updates for only the changed values
                             if (data.patient !== latest_doc.patient) {
-                                updatePromises.push(updateField('patient', data.patient));
+                                updateQueue.push(() => updateField('patient', data.patient));
                             }
                             if (data.custom_appointment_category !== latest_doc.custom_appointment_category) {
-                                updatePromises.push(updateField('custom_appointment_category', data.custom_appointment_category));
+                                updateQueue.push(() => updateField('custom_appointment_category', data.custom_appointment_category));
                             }
                             if (data.appointment_type !== latest_doc.appointment_type) {
-                                updatePromises.push(updateField('appointment_type', data.appointment_type));
+                                updateQueue.push(() => updateField('appointment_type', data.appointment_type));
                             }
                             if (data.appointment_for !== latest_doc.appointment_for) {
-                                updatePromises.push(updateField('appointment_for', data.appointment_for));
+                                updateQueue.push(() => updateField('appointment_for', data.appointment_for));
                             }
-                            if (parseInt(data.duration) !== parseInt(latest_doc.duration)) {
-                                updatePromises.push(updateField('duration', data.duration));
+                            if (parseInt(data.duration, 10) !== parseInt(latest_doc.duration, 10)) {
+                                updateQueue.push(() => updateField('duration', data.duration));
                             }
                             if (data.custom_confirmed !== latest_doc.custom_confirmed) {
-                                updatePromises.push(updateField('custom_confirmed', data.custom_confirmed));
+                                updateQueue.push(() => updateField('custom_confirmed', data.custom_confirmed));
+                            }
+                            if (data.reminded !== latest_doc.reminded) {
+                                updateQueue.push(() => updateField('reminded', data.reminded));
+                            }
+                            if (data.custom_visit_reason !== latest_doc.custom_visit_reason) {
+                                updateQueue.push(() => updateField('custom_visit_reason', data.custom_visit_reason));
                             }
                             if (data.custom_branch !== latest_doc.custom_branch) {
-                                updatePromises.push(updateField('custom_branch', data.custom_branch));
+                                updateQueue.push(() => updateField('custom_branch', data.custom_branch));
                             }
                             if (data.notes !== latest_doc.notes) {
-                                updatePromises.push(updateField('notes', data.notes));
+                                updateQueue.push(() => updateField('notes', data.notes));
                             }
                             if (data.practitioner !== latest_doc.practitioner) {
-                                updatePromises.push(updateField('practitioner', data.practitioner));
+                                updateQueue.push(() => updateField('practitioner', data.practitioner));
                             }
                             if (data.appointment_date !== latest_doc.appointment_date) {
-                                updatePromises.push(updateField('appointment_date', data.appointment_date));
+                                updateQueue.push(() => updateField('appointment_date', data.appointment_date));
                             }
                             if (selected_slot && selected_slot !== latest_doc.appointment_time) {
-                                updatePromises.push(updateField('appointment_time', selected_slot));
+                                updateQueue.push(() => updateField('appointment_time', selected_slot));
                             }
                             if (data.service_unit !== latest_doc.service_unit) {
-                                updatePromises.push(updateField('service_unit', data.service_unit));
+                                updateQueue.push(() => updateField('service_unit', data.service_unit));
                             }
 
-                            // If no fields changed, show message and return
-                            if (updatePromises.length === 0) {
+                            if (updateQueue.length === 0) {
                                 frappe.show_alert({
                                     message: __('No changes made to the appointment'),
                                     indicator: 'blue'
                                 });
-                                d.get_primary_btn().attr('disabled', null);
                                 return;
                             }
 
-                            // Disable button and update fields
-                            d.get_primary_btn().attr('disabled', true);
+                            (async () => {
+                                try {
+                                    for (const applyUpdate of updateQueue) {
+                                        await applyUpdate();
+                                    }
 
-                            // Execute all update promises
-                            Promise.all(updatePromises)
-                                .then(() => {
                                     d.hide();
                                     frappe.show_alert({
                                         message: __('Appointment updated successfully'),
@@ -2255,9 +2831,11 @@ let check_and_set_availability = function (event, is_new = false) {
                                         cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
                                         cur_list.refresh();
                                     }
-                                })
-                                .catch((error) => {
-                                    if (error.includes('has been modified after you have opened it')) {
+                                } catch (error) {
+                                    const rawError = typeof error === 'string' ? error : (error?.message || error?.exc || '');
+                                    const errorText = String(rawError || __('Unknown error'));
+
+                                    if (errorText.includes('has been modified after you have opened it')) {
                                         frappe.msgprint({
                                             title: __('Document Updated'),
                                             message: __('This appointment was modified by another user. Please refresh the page and try again.'),
@@ -2266,14 +2844,12 @@ let check_and_set_availability = function (event, is_new = false) {
                                     } else {
                                         frappe.msgprint({
                                             title: __('Error'),
-                                            message: __('Failed to update appointment: {0}', [error]),
+                                            message: __('Failed to update appointment: {0}', [errorText]),
                                             indicator: 'red'
                                         });
                                     }
-                                })
-                                .finally(() => {
-                                    d.get_primary_btn().attr('disabled', null);
-                                });
+                                }
+                            })();
                         }
                     });
                 }
@@ -2316,14 +2892,13 @@ let check_and_set_availability = function (event, is_new = false) {
                     'appointment_type': event.appointment_type,
                     'duration': event.duration,
                     'confirmed': event.custom_confirmed,
+                    'reminded': event.reminded,
+                    'custom_visit_reason': event.custom_visit_reason,
                     'branch': event.custom_branch,
                     'notes': event.notes,
                 });
             }
         }
-
-        // disable dialog action initially
-        d.get_primary_btn().attr('disabled', true);
 
         // Field Change Handler
         let fd = d.fields_dict;
@@ -2357,6 +2932,46 @@ let check_and_set_availability = function (event, is_new = false) {
                         }
                     }
                 });
+            }
+        };
+
+        d.fields_dict['appointment_type'].df.onchange = () => {
+            const appointment_type = d.get_value('appointment_type');
+
+            if (!appointment_type) {
+                previousAppointmentType = '';
+                return;
+            }
+
+            if (appointment_type === previousAppointmentType) {
+                return;
+            }
+
+            previousAppointmentType = appointment_type;
+
+            frappe.call({
+                method: 'frappe.client.get_value',
+                args: {
+                    doctype: 'Appointment Type',
+                    filters: { name: appointment_type },
+                    fieldname: 'default_duration'
+                },
+                callback: function (response) {
+                    if (!response.exc && response.message) {
+                        const fetchedDuration = parseInt(response.message.default_duration, 10);
+                        if (!isNaN(fetchedDuration)) {
+                            duration = fetchedDuration;
+                            d.set_value('duration', fetchedDuration);
+                        }
+                    }
+                }
+            });
+        };
+
+        d.fields_dict['duration'].df.onchange = () => {
+            const manualDuration = parseInt(d.get_value('duration'), 10);
+            if (!isNaN(manualDuration)) {
+                duration = manualDuration;
             }
         };
 
@@ -2411,7 +3026,11 @@ let check_and_set_availability = function (event, is_new = false) {
                             selected_slot = $btn.attr('data-name');
                             service_unit = $btn.attr('data-service-unit');
                             appointment_based_on_check_in = $btn.attr('data-day-appointment');
-                            duration = $btn.attr('data-duration');
+                            const slotDuration = parseInt($btn.attr('data-duration'), 10);
+                            if (!isNaN(slotDuration)) {
+                                duration = slotDuration;
+                                d.set_value('duration', slotDuration);
+                            }
                             add_video_conferencing = parseInt($btn.attr('data-tele-conf'));
                             overlap_appointments = parseInt($btn.attr('data-overlap-appointments'));
 
@@ -2448,9 +3067,6 @@ let check_and_set_availability = function (event, is_new = false) {
                                     d.$wrapper.find(".opt-out-conf-div").hide();
                                 }
                             }
-
-                            // enable primary action 'Book'
-                            d.get_primary_btn().attr('disabled', null);
                         });
 
                     } else {
