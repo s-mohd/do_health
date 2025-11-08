@@ -2,7 +2,7 @@
 # yarn lockfile v1
 
 
-"@fullcalendar/core@~6.1.19":
+"@fullcalendar/core@^6.1.19", "@fullcalendar/core@~6.1.19":
   version "6.1.19"
   resolved "https://registry.npmjs.org/@fullcalendar/core/-/core-6.1.19.tgz"
   integrity sha512-z0aVlO5e4Wah6p6mouM0UEqtRf1MZZPt4mwzEyU6kusaNL+dlWQgAasF2cK23hwT4cmxkEmr4inULXgpyeExdQ==
@@ -62,7 +62,7 @@
     "@fullcalendar/scrollgrid" "~6.1.19"
     "@fullcalendar/timeline" "~6.1.19"
 
-"@fullcalendar/resource@~6.1.19":
+"@fullcalendar/resource@^6.1.19", "@fullcalendar/resource@~6.1.19":
   version "6.1.19"
   resolved "https://registry.npmjs.org/@fullcalendar/resource/-/resource-6.1.19.tgz"
   integrity sha512-br1ylX/aIOfd8m7Tzl2LpJBSI+N9Q6aS1qw7K9qnQjYXWQyHBlfLG6ZcPmmkjfaqTUJc8ARRbtNWj1ts5qOZgQ==
