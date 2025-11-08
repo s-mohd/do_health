@@ -1,5 +1,11 @@
 import frappe
 import datetime
+from frappe.model.naming import make_autoname
+
+def patient_inserting(doc, method=None):
+    if not doc.custom_file_number:
+        series = frappe.db.get_single_value("Do Health Settings", "file_number_naming_series") or "PAT-.YYYY.-.#####"
+        doc.custom_file_number = frappe.model.naming.make_autoname(series)
 
 def patient_update(doc, method=None):
     frappe.publish_realtime("patient_updated", doc)

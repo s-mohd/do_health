@@ -23,6 +23,7 @@ from healthcare.healthcare.doctype.item_insurance_eligibility.item_insurance_eli
 from healthcare.healthcare.doctype.patient_insurance_coverage.patient_insurance_coverage import (
 	make_insurance_coverage,
 )
+from frappe.desk.form.linked_with import get as get_linked_documents
 
 # App Resources
 @frappe.whitelist()
@@ -1320,11 +1321,17 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	appo.practitioner 				as resource,
 	appo.creation 					as creation,
 	appo.patient_name 				as patient_name,
+	appo.patient					as patient,
 	appo.owner 						as owner,
 	appo.modified_by 				as modified_by,
 	appo.custom_visit_status 		as status,
 	appo.notes 						as note,
 	appo.custom_payment_type		as payment_type,
+	appo.custom_billing_status		as billing_status,
+	appo.ref_sales_invoice			as sales_invoice,
+	appo.custom_insurance_sales_invoice as insurance_invoice,
+	appo.custom_insurance_status	as insurance_status,
+	appo.invoiced					as invoiced,
 	(SELECT atl.`time` FROM `tabAppointment Time Logs` atl WHERE atl.status = 'Arrived' AND atl.parent = appo.name ORDER BY atl.`time` DESC LIMIT 1) as arrival_time,
 	appo.modified 					as modified,
 	appo.patient_name 				as customer,
@@ -1406,11 +1413,11 @@ def get_availability_data(date, practitioner, appointment):
 
 	if available_slotes and len(available_slotes):
 		slot_details += available_slotes
-	if not slot_details:
-		# TODO: return available slots in nearby dates
-		frappe.throw(
-			_("Healthcare Practitioner not available on {0}").format(weekday), title=_("Not Available")
-		)
+	# if not slot_details:
+	# 	# TODO: return available slots in nearby dates
+	# 	frappe.throw(
+	# 		_("Healthcare Practitioner not available on {0}").format(weekday), title=_("Not Available")
+	# 	)
 
 	fee_validity = "Disabled"
 	free_follow_ups = False
@@ -1666,19 +1673,7 @@ def get_practitioner_unavailability(date, practitioner=None, department=None, se
 
 
 def validate_practitioner_schedules(schedule_entry, practitioner):
-	if schedule_entry.schedule:
-		if not schedule_entry.service_unit:
-			frappe.throw(
-				_(
-					"Practitioner {0} does not have a Service Unit set against the Practitioner Schedule {1}."
-				).format(
-					get_link_to_form("Healthcare Practitioner", practitioner),
-					frappe.bold(schedule_entry.schedule),
-				),
-				title=_("Service Unit Not Found"),
-			)
-
-	else:
+	if not schedule_entry.schedule:
 		frappe.throw(
 			_("Practitioner {0} does not have a Practitioner Schedule assigned.").format(
 				get_link_to_form("Healthcare Practitioner", practitioner)
@@ -2032,19 +2027,42 @@ def _coverage_split(patient_name, item_code, unit_rate, qty, appointment_date=No
 		return flt(patient_share, 2), flt(insurance_share, 2)
 
 	policy = _get_active_insurance_policy(patient_name, company=company, on_date=appointment_date)
-	if policy and frappe.db.exists("DocType", "Item Insurance Eligibility"):
-		eligibility = get_insurance_eligibility(
-			item_code=item_code,
-			on_date=appointment_date or nowdate(),
-			insurance_plan=policy.get("insurance_plan"),
-		)
-		if eligibility:
-			coverage_pct = flt(eligibility.get("coverage") or 0)
-			discount_pct = flt(eligibility.get("discount") or 0)
-			discounted_total = total - (total * discount_pct * 0.01)
-			insurance_share = flt(discounted_total * coverage_pct * 0.01, 2)
-			patient_share = flt(discounted_total - insurance_share, 2)
+	
+	eligibility_plan = frappe.db.get_value('Insurance Payor Eligibility Plan',
+		policy.get("insurance_plan"),
+		['custom_default_discount_percentage', 'custom_coverage_type', 'custom_default_coverage_percentage', 'custom_default_fixed_amount'],
+		as_dict=True
+	)
+	discount_percentage = flt(eligibility_plan["custom_default_discount_percentage"] or 0)
+	discounted_total = total - (total * discount_percentage * 0.01)
+	if eligibility_plan["custom_coverage_type"] == "Fixed Amount":
+		fixed_amount = flt(eligibility_plan["custom_default_fixed_amount"] or 0)
+		insurance_share = min(fixed_amount, discounted_total)
+	elif eligibility_plan["custom_coverage_type"] == "Percentage":
+		coverage_percentage = flt(eligibility_plan["custom_default_coverage_percentage"] or 0)
+		insurance_share = flt(discounted_total * coverage_percentage * 0.01, 2)
 
+	eligibility = get_insurance_eligibility(
+		item_code=item_code,
+		on_date=appointment_date or nowdate(),
+		insurance_plan=policy.get("insurance_plan"),
+	)
+	if eligibility:
+		discount_pct = flt(eligibility.get("discount") or 0)
+		discounted_total = total - (total * discount_pct * 0.01)
+		eligibility_more_data = frappe.db.get_value('Item Insurance Eligibility',
+			eligibility.get("name"),
+			['custom_coverage_type', 'custom_default_fixed_amount'],
+			as_dict=True
+		)
+		if eligibility_more_data["custom_coverage_type"] == "Fixed Amount":
+			fixed_amount = flt(eligibility_more_data["custom_default_fixed_amount"] or 0)
+			insurance_share = min(fixed_amount, discounted_total)
+		elif eligibility_more_data["custom_coverage_type"] == "Percentage":
+			coverage_pct = flt(eligibility.get("coverage") or 0)
+			insurance_share = flt(discounted_total * coverage_pct * 0.01, 2)
+	
+	patient_share = flt(discounted_total - insurance_share, 2)
 	return flt(patient_share, 2), flt(insurance_share, 2)
 
 @frappe.whitelist()
@@ -2161,10 +2179,8 @@ def _update_patient_billing_status(appt, patient_invoice=None):
 		appt.db_set("custom_billing_status", "Paid")
 	elif inv.docstatus == 1 and 0 < inv.outstanding_amount < inv.grand_total:
 		appt.db_set("custom_billing_status", "Partially Paid")
-	elif inv.docstatus == 1:
-		appt.db_set("custom_billing_status", "Not Paid")
 	else:
-		appt.db_set("custom_billing_status", "Not Billed")
+		appt.db_set("custom_billing_status", "Not Paid")
 
 @frappe.whitelist()
 def create_invoices_for_appointment(appointment_id, submit_invoice: int = 0):
@@ -2452,3 +2468,139 @@ def create_or_update_insurance_claim(appointment, invoice):
 	claim.add_comment("Comment", text=_("Linked from Sales Invoice {0}").format(invoice))
 	appt.db_set("custom_insurance_status", "Claimed")
 	return claim.name
+
+
+@frappe.whitelist()
+def get_patient_documents(patient):
+	if not patient:
+		return {"documents": [], "total_files": 0}
+
+	frappe.has_permission("Patient", doc=patient, throw=True)
+
+	documents_by_doctype = defaultdict(set)
+	documents_by_doctype["Patient"].add(patient)
+
+	linked_docs = get_linked_documents("Patient", patient) or {}
+	for linked_doctype, items in linked_docs.items():
+		for item in items or []:
+			docname = item.get("name")
+			if docname:
+				documents_by_doctype[linked_doctype].add(docname)
+
+	meta_cache = {}
+	doc_details = {}
+
+	for doctype, names in documents_by_doctype.items():
+		if not names:
+			continue
+
+		meta = meta_cache.setdefault(doctype, frappe.get_meta(doctype))
+		title_field = meta.get("title_field") or getattr(meta, "title_field", None)
+
+		candidate_fields = []
+		if title_field and title_field not in ("", "name"):
+			candidate_fields.append(title_field)
+
+		for fallback in ("title", "subject", "patient_name", "appointment_type", "procedure", "procedure_template"):
+			if fallback not in candidate_fields and meta.get_field(fallback):
+				candidate_fields.append(fallback)
+
+		fields = ["name"]
+		fields.extend(candidate_fields)
+
+		rows = frappe.get_all(doctype, filters={"name": ["in", list(names)]}, fields=fields, limit=None)
+
+		doctype_label = _(doctype)
+		for row in rows:
+			title = None
+			for fieldname in candidate_fields:
+				if row.get(fieldname):
+					title = row[fieldname]
+					break
+
+			if not title:
+				title = row.get("name")
+
+			doc_details[(doctype, row["name"])] = {
+				"doctype": doctype,
+				"doctype_label": doctype_label,
+				"docname": row["name"],
+				"title": title,
+				"route": f"#Form/{doctype}/{row['name']}",
+				"files": [],
+			}
+
+	if not doc_details:
+		return {"documents": [], "total_files": 0}
+
+	conditions = []
+	values = []
+	for doctype, names in documents_by_doctype.items():
+		if not names:
+			continue
+		name_list = list(names)
+		placeholders = ", ".join(["%s"] * len(name_list))
+		conditions.append(f"(attached_to_doctype=%s AND attached_to_name IN ({placeholders}))")
+		values.append(doctype)
+		values.extend(name_list)
+
+	if not conditions:
+		return {"documents": [], "total_files": 0}
+
+	query = f"""
+		SELECT
+			name,
+			file_name,
+			file_url,
+			file_size,
+			attached_to_doctype,
+			attached_to_name,
+			attached_to_field,
+			is_private,
+			creation,
+			modified,
+			content_hash,
+			owner
+		FROM `tabFile`
+		WHERE is_folder = 0 AND ({' OR '.join(conditions)})
+		ORDER BY creation DESC
+	"""
+
+	files = frappe.db.sql(query, values, as_dict=True)
+
+	total_files = 0
+	for file_doc in files:
+		key = (file_doc.attached_to_doctype, file_doc.attached_to_name)
+		doc_info = doc_details.get(key)
+		if not doc_info:
+			continue
+
+		doc_info["files"].append(
+			{
+				"name": file_doc.name,
+				"file_name": file_doc.file_name,
+				"file_url": file_doc.file_url,
+				"file_size": file_doc.file_size,
+				"attached_to_field": file_doc.attached_to_field,
+				"is_private": file_doc.is_private,
+				"creation": file_doc.creation,
+				"modified": file_doc.modified,
+				"content_hash": file_doc.content_hash,
+				"owner": file_doc.owner,
+			}
+		)
+		total_files += 1
+
+	documents = []
+	for doc in doc_details.values():
+		if not doc["files"]:
+			continue
+		doc["files"].sort(key=lambda x: x["creation"], reverse=True)
+		doc["files_count"] = len(doc["files"])
+		latest = doc["files"][0]["creation"]
+		doc["latest_file"] = latest
+		documents.append(doc)
+
+	documents.sort(key=lambda x: x["latest_file"], reverse=True)
+
+	return {"documents": documents, "total_files": total_files}

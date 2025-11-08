@@ -6,7 +6,7 @@ app_publisher = "Sayed Mohamed"
 app_description = "an extention for the frappe healthcare app"
 app_email = "sayed10998@gmail.com"
 app_license = "mit"
-app_version = "1.0.5"
+app_version = "1.0.18"
 
 # Apps
 # ------------------
@@ -183,6 +183,7 @@ doc_events = {
 #               "on_trash": "method"
 #       }
     'Patient':{
+        "before_insert": "do_health.api.events.patient_inserting",
         "on_update": "do_health.api.events.patient_update"
     },
     'Patient Appointment':{

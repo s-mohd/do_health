@@ -5,6 +5,8 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "tab_2_tab",
+  "file_number_naming_series",
   "patient_encounter_tab",
   "side_tabs_section",
   "show_vital_signs",
@@ -14,8 +16,7 @@
   "patient_history_tab_layout",
   "patient_history_editor",
   "column_break_ttba",
-  "show_dental_charts",
-  "tab_2_tab"
+  "show_dental_charts"
  ],
  "fields": [
   {
@@ -44,7 +45,7 @@
   {
    "fieldname": "tab_2_tab",
    "fieldtype": "Tab Break",
-   "label": "Tab 2"
+   "label": "Patient"
   },
   {
    "default": "0",
@@ -80,13 +81,18 @@
    "fieldtype": "Code",
    "label": "Patient History Editor",
    "options": "JS"
+  },
+  {
+   "fieldname": "file_number_naming_series",
+   "fieldtype": "Data",
+   "label": "File Number Naming Series"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-10-10 11:21:22.198014",
+ "modified": "2025-11-08 00:45:48.604427",
  "modified_by": "Administrator",
  "module": "Do Health",
  "name": "Do Health Settings",

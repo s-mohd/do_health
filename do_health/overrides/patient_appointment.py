@@ -18,14 +18,21 @@ class CustomPatientAppointment(PatientAppointment):
 		self.set_position_in_queue()
 
 	def before_save(self):
-		current_value = self.get('custom_visit_status')
-		old_value = self.get_db_value('custom_visit_status')
+		current_visit_status = self.get('custom_visit_status')
+		old_visit_status = self.get_db_value('custom_visit_status')
 
-		if current_value != old_value:
+		if current_visit_status != old_visit_status:
 			self.append("custom_appointment_time_logs", {
-				"status": current_value,
+				"status": current_visit_status,
 				"time": now_datetime()
 			})
+
+		current_date = self.get('date')
+		current_time = self.get('time')
+		old_date = self.get_db_value('date')
+		old_time = self.get_db_value('time')
+		if (current_date != old_date) or (current_time != old_time):
+			self.status = 'Rescheduled'
 
 	def insert_calendar_event(self):
 		if not self.practitioner:

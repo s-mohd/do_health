@@ -28,9 +28,10 @@ const ACTION_MENU_ITEMS = [
     { action: 'editAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
     { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-calendar-plus-o' },
     // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
-    // { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
-    { action: 'openBillingInterface', label: 'Billing & Services', icon: 'fa-credit-card' },
-    { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
+    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
+    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-credit-card' },
+    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
+    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-id-card-o' },
     { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-history' },
 ];
 
@@ -311,6 +312,7 @@ frappe.views.calendar["Patient Appointment"] = {
             calendarView.applyEventStyling(info);
             calendarView.enhanceEventContent(info);
             calendarView.addEventInteractions(info);
+            calendarView.adjustEventDensity(info);
         },
 
         // event content
@@ -374,7 +376,7 @@ frappe.views.calendar["Patient Appointment"] = {
                 cur_list.page.set_primary_action(primaryActionLabel, () => {
                     if (typeof check_and_set_availability === 'function') {
                         const defaultEvent = {
-                            appointment_date: frappe.datetime.get_today(),
+                            appointment_date: get_session_date(),
                             duration: 30
                         };
                         check_and_set_availability(defaultEvent, true);
@@ -717,17 +719,105 @@ frappe.views.calendar["Patient Appointment"] = {
         }
     },
 
+    // Safely escape text for HTML output
+    escapeHtml: function (value) {
+        if (value === undefined || value === null) {
+            return '';
+        }
+        const stringValue = typeof value === 'string' ? value : String(value);
+        if (frappe.utils?.escape_html) {
+            return frappe.utils.escape_html(stringValue);
+        }
+        const div = document.createElement('div');
+        div.textContent = stringValue;
+        return div.innerHTML;
+    },
+
+    // Map billing status to Bootstrap badge styles
+    getBillingBadgeClass: function (status) {
+        const normalized = (status || '').toString().trim().toLowerCase();
+        const map = {
+            'paid': 'success',
+            'partially paid': 'warning',
+            'partially billed': 'warning',
+            'not paid': 'warning',
+            'not billed': 'secondary',
+            'invoiced': 'info',
+            'cancelled': 'danger'
+        };
+        return map[normalized] || 'secondary';
+    },
+
+    // Map insurance claim status to Bootstrap badge styles
+    getInsuranceBadgeClass: function (status) {
+        const normalized = (status || '').toString().trim().toLowerCase();
+        const map = {
+            'claimed': 'info',
+            'submitted': 'info',
+            'approved': 'success',
+            'paid': 'primary',
+            'rejected': 'danger',
+            'not claimed': 'secondary',
+            'not submitted': 'secondary',
+            'in progress': 'warning'
+        };
+        return map[normalized] || 'secondary';
+    },
+    adjustEventDensity: function (info) {
+        const calendarView = this;
+        const el = info?.el;
+        if (!el) {
+            return;
+        }
+
+        const applyDensityClass = () => {
+            el.classList.remove('appointment-event--tight', 'appointment-event--condensed');
+
+            const height = el.getBoundingClientRect().height;
+            if (!height) {
+                return;
+            }
+
+            if (height <= 54) {
+                el.classList.add('appointment-event--tight');
+            } else if (height <= 74) {
+                el.classList.add('appointment-event--condensed');
+            }
+        };
+
+        if (window.requestAnimationFrame) {
+            requestAnimationFrame(() => requestAnimationFrame(applyDensityClass));
+        } else {
+            setTimeout(applyDensityClass, 0);
+        }
+    },
+
     // Enhance event content
     enhanceEventContent: function (info) {
         var event = info.event;
         var element = info.el;
+        const calendarView = this;
 
         // Format title
-        var full_name = event.extendedProps.full_name || '';
-        var short_name = full_name.split(' ')[0] + ' ' + full_name.trim().split(' ').splice(-1);
+        var full_name = event.extendedProps.full_name || event.title || '';
+        var short_name = '';
+        if (full_name) {
+            const parts = full_name.trim().split(/\s+/).filter(Boolean);
+            if (parts.length === 1) {
+                short_name = parts[0];
+            } else if (parts.length > 1) {
+                short_name = `${parts[0]} ${parts[parts.length - 1]}`;
+            }
+        }
+        if (!short_name) {
+            short_name = event.title || '';
+        }
         var titleEl = element.querySelector('.fc-event-title');
         if (titleEl) {
-            titleEl.innerHTML = `<strong>${short_name}</strong>`;
+            titleEl.innerHTML = '';
+            var strong = document.createElement('strong');
+            strong.textContent = short_name;
+            titleEl.appendChild(strong);
         }
 
         // Add custom details
@@ -748,19 +838,23 @@ frappe.views.calendar["Patient Appointment"] = {
             ${event.extendedProps.note || ''}
         </div>`;
 
-        var status = `<div class="appt-status ${event.extendedProps.status?.toLowerCase().replace(' ', '-') || ''}">
-            <span class="${info.view.type == 'timeGridDay' ? 'agenda-day' : ''} 
-            ${event.extendedProps.status == 'Completed' ? 'hidden' : ''}"></span>
-            ${event.extendedProps.status}
-            <span style="${event.extendedProps.status != 'Arrived' ? 'display: none;' : ''}">
-                <span class="arrival_timers">${moment(event.extendedProps.arrival_time, "HH:mm:ss").fromNow()}</span>
-            </span>
-        </div>`;
+        const statusValue = event.extendedProps.status || '';
+        const statusClass = statusValue ? statusValue.toLowerCase().replace(/\s+/g, '-') : '';
+        const statusLabel = calendarView.escapeHtml(statusValue);
+        const showArrival = statusValue === 'Arrived' && event.extendedProps.arrival_time;
+        // var status = `<div class="appt-status ${statusClass}">
+        //     <span class="${info.view.type == 'timeGridDay' ? 'agenda-day' : ''} 
+        //     ${statusValue == 'Completed' ? 'hidden' : ''}"></span>
+        //     ${statusLabel}
+        //     <span style="${showArrival ? '' : 'display: none;'}">
+        //         ${showArrival ? `<span class="arrival_timers">${moment(event.extendedProps.arrival_time, "HH:mm:ss").fromNow()}</span>` : ''}
+        //     </span>
+        // </div>`;
 
-        var mainContent = element.querySelector('.fc-event-main .fc-event-main-frame');
-        if (mainContent) {
-            mainContent.insertAdjacentHTML('beforeend', status);
-        }
+        // var mainContent = element.querySelector('.fc-event-main .fc-event-main-frame');
+        // if (mainContent) {
+        //     mainContent.insertAdjacentHTML('beforeend', status);
+        // }
     },
 
     // Add event interactions
@@ -965,28 +1059,95 @@ frappe.views.calendar["Patient Appointment"] = {
     createPopover: function (element, event) {
         var created_by = formatUserName(event.extendedProps.owner);
         var modified_by = formatUserName(event.extendedProps.modified_by);
+        const calendarView = frappe.views.calendar["Patient Appointment"];
+        const escapeHtml = calendarView.escapeHtml.bind(calendarView);
+
+        const patientName = escapeHtml(event.extendedProps.full_name || event.title || '');
+        const mobile = escapeHtml(event.extendedProps.mobile || '');
+        const fileNumberRaw = event.extendedProps.file_number || '';
+        const fileNumber = escapeHtml(fileNumberRaw);
+        const cprRaw = event.extendedProps.cpr || '';
+        const cpr = escapeHtml(cprRaw);
+        const hasBirthdate = Boolean(event.extendedProps.birthdate);
+        const hasFileNumber = Boolean(fileNumberRaw);
+        const hasCpr = Boolean(cprRaw);
+        const appointmentType = event.extendedProps.appointment_type ? escapeHtml(event.extendedProps.appointment_type) : '';
+        const visitReason = event.extendedProps.visit_reason ? escapeHtml(event.extendedProps.visit_reason) : '';
+        const room = event.extendedProps.room ? escapeHtml(event.extendedProps.room) : '';
+        const note = event.extendedProps.note ? escapeHtml(event.extendedProps.note) : '';
+        const paymentType = event.extendedProps.payment_type ? escapeHtml(event.extendedProps.payment_type) : '';
+        const statusLabel = event.extendedProps.status ? escapeHtml(event.extendedProps.status) : '';
+        const imageSrc = event.extendedProps.image ? escapeHtml(event.extendedProps.image) : '';
+        const hasImage = Boolean(event.extendedProps.image);
+
+        const salesInvoiceRaw = event.extendedProps.sales_invoice;
+        const insuranceInvoiceRaw = event.extendedProps.insurance_invoice;
+        const billingStatusValue = event.extendedProps.billing_status || (salesInvoiceRaw ? 'Invoiced' : 'Not Billed');
+        const insuranceStatusValue = event.extendedProps.insurance_status || 'Not Claimed';
+        const billingBadgeClass = calendarView.getBillingBadgeClass(billingStatusValue);
+        const insuranceBadgeClass = calendarView.getInsuranceBadgeClass(insuranceStatusValue);
+        const billingLabel = escapeHtml(__(billingStatusValue));
+        const insuranceLabel = escapeHtml(__(insuranceStatusValue));
+        const salesInvoiceLink = salesInvoiceRaw
+            ? `<a href="/app/sales-invoice/${encodeURIComponent(salesInvoiceRaw)}" target="_blank">${escapeHtml(salesInvoiceRaw)}</a>`
+            : '';
+        const insuranceInvoiceLink = insuranceInvoiceRaw
+            ? `<a href="/app/sales-invoice/${encodeURIComponent(insuranceInvoiceRaw)}" target="_blank">${escapeHtml(insuranceInvoiceRaw)}</a>`
+            : '';
+
+        const headerMetaParts = [];
+        if (hasBirthdate) {
+            headerMetaParts.push(`${__('Age')}: ${moment().diff(event.extendedProps.birthdate, 'years')}`);
+        }
+        if (hasFileNumber) {
+            headerMetaParts.push(`${__('File')}: ${fileNumber}`);
+        }
+        if (hasCpr) {
+            headerMetaParts.push(`${__('CPR')}: ${cpr}`);
+        }
+        if (mobile) {
+            headerMetaParts.push(mobile);
+        }
+        const headerMeta = headerMetaParts.join(' | ');
+
+        const billingInfoHtml = `
+            <small class="d-block mt-1">
+                <b>${__('Billing')}:</b>
+                <span class="badge badge-${billingBadgeClass}">${billingLabel}</span>
+                ${salesInvoiceLink ? `<span class="ml-1">${salesInvoiceLink}</span>` : ''}
+            </small>
+        `.trim();
+
+        const insuranceInfoHtml = `
+            <small class="d-block">
+                <b>${__('Insurance')}:</b>
+                <span class="badge badge-${insuranceBadgeClass}">${insuranceLabel}</span>
+                ${insuranceInvoiceLink ? `<span class="ml-1">${insuranceInvoiceLink}</span>` : ''}
+            </small>
+        `.trim();
 
         var popoverContent = `
             <div id="popoverX-${event.id}" class="popover-x popover-default popover-md">
                 <div class="arrow"></div>
                 <div style="background-color: #D9D9D9;opacity: 0.9;" class="popover-header popover-content">
-                    ${event.extendedProps.full_name} <small class=""><br/>
-                    <span class="${event.extendedProps.birthdate ? "" : "hidden"}">Age: ${moment().diff(event.extendedProps.birthdate, 'years')} | </span>
-                    <span class="${event.extendedProps.file_number ? "" : "hidden"}">File: ${event.extendedProps.file_number} | </span>
-                    <span class="${event.extendedProps.cpr ? "" : "hidden"}"> CPR: ${event.extendedProps.cpr} | </span>${event.extendedProps.mobile}</small>
+                    ${patientName}
+                    ${headerMeta ? `<small class=""><br/>${headerMeta}</small>` : ''}
                 </div>
                 <div style="background-color: #F2F2F2" class="popover-body popover-content">
                     <div style="background-color: #F2F2F2" class="row">
-                        <div class="col-md-5 ${event.extendedProps.image ? "" : "hidden"}">
-                            ${event.extendedProps.image ? `<img class="img-thumbnail img-responsive" src="${event.extendedProps.image}">` : ''}
+                        <div class="col-md-5 ${hasImage ? "" : "hidden"}">
+                            ${hasImage ? `<img class="img-thumbnail img-responsive" src="${imageSrc}">` : ''}
                         </div>
-                        <div class="col-md-7" style="${event.extendedProps.image ? "padding-left: 0px;" : ""}">
-                            ${event.extendedProps.appointment_type ? `<small><b>Type:</b> ${event.extendedProps.appointment_type}</small><br/>` : ''}
-                            ${event.extendedProps.visit_reason ? `<small><b>Reason:</b> ${event.extendedProps.visit_reason}</small><br/>` : ''}
-                            ${event.extendedProps.room ? `<small><b>Room:</b> ${event.extendedProps.room}</small><br/>` : ''}
-                            ${event.extendedProps.note ? `<small><b>Notes:</b> ${event.extendedProps.note}</small><br/>` : ''}
+                        <div class="col-md-7" style="${hasImage ? "padding-left: 0px;" : ""}">
+                            ${appointmentType ? `<small><b>${__('Type')}:</b> ${appointmentType}</small><br/>` : ''}
+                            ${visitReason ? `<small><b>${__('Reason')}:</b> ${visitReason}</small><br/>` : ''}
+                            ${room ? `<small><b>${__('Room')}:</b> ${room}</small><br/>` : ''}
+                            ${note ? `<small><b>${__('Notes')}:</b> ${note}</small><br/>` : ''}
+                            ${paymentType ? `<small><b>${__('Payment')}:</b> ${paymentType}</small><br/>` : ''}
+                            ${billingInfoHtml}
+                            ${insuranceInfoHtml}
                             <small><div class="label label-warning">
-                                ${event.extendedProps.status ? `${event.extendedProps.status}<br/>` : ''}
+                                ${statusLabel ? `${statusLabel}<br/>` : ''}
                             </div></small>
                         </div>
                     </div>
@@ -1039,18 +1200,69 @@ frappe.views.calendar["Patient Appointment"] = {
 
     // Get time grid event content
     getTimeGridEventContent: function (arg) {
-        const { status, appointment_type, room, note, duration } = arg.event.extendedProps;
+        const calendarView = this;
+        const {
+            status,
+            appointment_type,
+            visit_reason,
+            room,
+            note,
+            duration,
+            billing_status,
+            sales_invoice,
+            insurance_status,
+            insurance_invoice
+        } = arg.event.extendedProps;
+
+        const safeStatusClass = status ? status.toLowerCase().replace(/\s+/g, '-') : '';
+        const safeTitle = calendarView.escapeHtml(arg.event.title || '');
+        const safeType = appointment_type ? calendarView.escapeHtml(appointment_type) : '';
+        const safeReason = visit_reason ? calendarView.escapeHtml(visit_reason) : '';
+        const safeRoom = room ? calendarView.escapeHtml(room) : '';
+        const safeNote = note ? calendarView.escapeHtml(note) : '';
+
+        const billingValue = billing_status || (sales_invoice ? 'Invoiced' : 'Not Billed');
+        const billingBadgeClass = calendarView.getBillingBadgeClass(billingValue);
+        const billingLabel = calendarView.escapeHtml(__(billingValue));
+        const salesInvoiceLabel = sales_invoice ? calendarView.escapeHtml(sales_invoice) : '';
+
+        const insuranceValue = insurance_status || 'Not Claimed';
+        const insuranceBadgeClass = calendarView.getInsuranceBadgeClass(insuranceValue);
+        const insuranceLabel = calendarView.escapeHtml(__(insuranceValue));
+        const insuranceInvoiceLabel = insurance_invoice ? calendarView.escapeHtml(insurance_invoice) : '';
+
+        const billingLine = `
+            <div class="appt-finance-line appt-billing">
+                <i class="fa fa-credit-card"></i>
+                <span class="badge badge-${billingBadgeClass}">${billingLabel}</span>
+                ${salesInvoiceLabel ? `<span class="appt-invoice-ref">${salesInvoiceLabel}</span>` : ''}
+            </div>
+        `.trim();
+
+        const insuranceLine = `
+            <div class="appt-finance-line appt-insurance">
+                <i class="fa fa-shield"></i>
+                <span class="badge badge-${insuranceBadgeClass}">${insuranceLabel}</span>
+                ${insuranceInvoiceLabel ? `<span class="appt-invoice-ref">${insuranceInvoiceLabel}</span>` : ''}
+            </div>
+        `.trim();
+
         return {
             html: `
-                <div class="fc-event-main-frame appt-card ${status?.toLowerCase().replace(' ', '-') || ''}">
+                <div class="fc-event-main-frame appt-card ${safeStatusClass}">
                     <div class="appt-header">
-                        <div class="appt-title">${arg.event.title}</div>
-                        <div class="appt-duration">${duration || this.calculateDuration(arg.event)}m</div>
+                        <div class="appt-title">${safeTitle}</div>
+                        <div class="appt-duration">${duration || calendarView.calculateDuration(arg.event)}m</div>
                     </div>
                     <div class="appt-meta">
-                        <div class="appt-type"><i class="fa fa-user-md"></i> ${appointment_type || ''}</div>
-                        ${room ? `<div class="appt-room"><i class="fa fa-home"></i> ${room}</div>` : ''}
-                        ${note ? `<div class="appt-note"><i class="fa fa-commenting"></i> ${note}</div>` : ''}
+                        ${safeType ? `<div class="appt-type"><i class="fa fa-user-md"></i> ${safeType}</div>` : ''}
+                        ${safeReason ? `<div class="appt-type"><i class="fa fa-user-md"></i> ${safeReason}</div>` : ''}
+                        ${safeRoom ? `<div class="appt-room"><i class="fa fa-home"></i> ${safeRoom}</div>` : ''}
+                        ${safeNote ? `<div class="appt-note"><i class="fa fa-commenting"></i> ${safeNote}</div>` : ''}
+                        <div class="appt-finance">
+                            ${billingLine}
+                            ${insuranceLine}
+                        </div>
                     </div>
                 </div>
             `
@@ -1510,6 +1722,9 @@ const appointmentActions = {
         });
     },
 
+    cprReading(appointmentId) {
+    },
+
     async openBillingInterface(appointmentId) {
         let appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
         const isInsurance = (appt.custom_payment_type || '').toLowerCase().includes('insur');
@@ -1709,7 +1924,7 @@ const appointmentActions = {
         // Add item
         addBtn.addEventListener('click', async () => {
             const qty = cint(qtyInput.value || 1);
-            const item_code = chosenItemCode || itemLink.get_value();
+            const item_code = itemLink.get_value();
             if (!item_code) {
                 frappe.show_alert({ message: __('Pick an item first'), indicator: 'orange' });
                 return;
@@ -2343,10 +2558,23 @@ const appointmentActions = {
         this.refreshCalendar();
     },
 
-    bookFollowUp(appointmentId) {
-        frappe.new_doc('Patient Appointment', {
-            follow_up_of: appointmentId,
-        });
+    async bookFollowUp(appointmentId) {
+        let details = await appointmentActions.fetchAppointmentFields(appointmentId, ['patient', 'practitioner']);
+        const defaultEvent = {
+            practitioner: details.practitioner,
+            patient: details.patient,
+            custom_appointment_category: 'Follow-up',
+
+            // 'appointment_category': event.custom_appointment_category,
+            // 'appointment_type': event.appointment_type,
+            // 'duration': event.duration,
+            // 'confirmed': event.custom_confirmed,
+            // 'reminded': event.reminded,
+            // 'custom_visit_reason': event.custom_visit_reason,
+            // 'branch': event.custom_branch,
+            // 'notes': event.notes,
+        };
+        check_and_set_availability(defaultEvent, true);
     },
 
     async showVisitLog(appointmentId) {
@@ -2650,10 +2878,11 @@ let check_and_set_availability = function (event, is_new = false) {
                 { fieldtype: 'Link', fieldname: 'appointment_type', options: 'Appointment Type', reqd: 1, label: 'Appointment Type', default: initialAppointmentType },
                 { fieldtype: 'Data', fieldname: 'appointment_for', label: 'Appointment For', hidden: 1, default: initialAppointmentFor },
                 { fieldtype: 'Int', fieldname: 'duration', label: 'Duration', default: initialDuration },
-                { fieldtype: 'Select', options: 'First Time\nFollow Up\nProcedure\nSession', fieldname: 'appointment_category', label: 'Appointment Category', default: event?.custom_appointment_category ? event.custom_appointment_category : '' },
+                { fieldtype: 'Select', options: 'First Time\nFollow-up\nProcedure\nSession', fieldname: 'appointment_category', label: 'Appointment Category', default: event?.custom_appointment_category ? event.custom_appointment_category : '' },
                 { fieldtype: 'Link', options: 'Visit Reason', fieldname: 'visit_reason', label: 'Visit Reason', default: event?.visit_reason ? event.visit_reason : '' },
                 { fieldtype: 'Column Break' },
                 { fieldtype: 'Link', fieldname: 'branch', options: 'Branch', label: 'Branch', default: event?.branch ? event.branch : '' },
+                { fieldtype: 'Link', fieldname: 'service_unit', options: 'Healthcare Service Unit', label: 'Room', default: event?.service_unit ? event.service_unit : '' },
                 { fieldtype: 'Small Text', fieldname: 'notes', label: 'Notes', default: event?.notes ? event.notes : '' },
                 { fieldtype: 'Check', fieldname: 'reminded', label: 'Reminded?', default: event?.reminded ? event.reminded : '' },
                 { fieldtype: 'Check', fieldname: 'confirmed', label: 'Confirmed?', default: event?.confirmed ? event.confirmed : '' },
@@ -2679,7 +2908,7 @@ let check_and_set_availability = function (event, is_new = false) {
                     'notes': d.get_value('notes'),
                     'practitioner': d.get_value('practitioner'),
                     'appointment_date': d.get_value('appointment_date'),
-                    'service_unit': service_unit,
+                    'service_unit': d.get_value('service_unit') || service_unit,
                 }
 
                 if (is_new) {
@@ -2954,7 +3183,7 @@ let check_and_set_availability = function (event, is_new = false) {
                 args: {
                     doctype: 'Appointment Type',
                     filters: { name: appointment_type },
-                    fieldname: 'default_duration'
+                    fieldname: ['default_duration', 'custom_default_visit_reason']
                 },
                 callback: function (response) {
                     if (!response.exc && response.message) {
@@ -2963,6 +3192,8 @@ let check_and_set_availability = function (event, is_new = false) {
                             duration = fetchedDuration;
                             d.set_value('duration', fetchedDuration);
                         }
+
+                        d.set_value('custom_visit_reason', response.message.custom_default_visit_reason);
                     }
                 }
             });
@@ -3025,6 +3256,7 @@ let check_and_set_availability = function (event, is_new = false) {
                             $btn.addClass('btn-primary');
                             selected_slot = $btn.attr('data-name');
                             service_unit = $btn.attr('data-service-unit');
+                            d.set_value('service_unit', service_unit);
                             appointment_based_on_check_in = $btn.attr('data-day-appointment');
                             const slotDuration = parseInt($btn.attr('data-duration'), 10);
                             if (!isNaN(slotDuration)) {
@@ -3106,7 +3338,7 @@ let check_and_set_availability = function (event, is_new = false) {
                 ${__('Practitioner Schedule: ')} </b> ${slot_info.slot_name}
                     ${slot_info.tele_conf && !slot_info.allow_overlap ? '<i class="fa fa-video-camera fa-1x" aria-hidden="true"></i>' : ''}
                 </span><br>
-                <span><b> ${__('Service Unit: ')} </b> ${slot_info.service_unit}</span>`;
+                ${slot_info.service_unit ? `<span><b> ${__('Service Unit: ')} </b> ${slot_info.service_unit}</span>` : ''}`;
             if (slot_info.service_unit_capacity) {
                 slot_html += `<br><span> <b> ${__('Maximum Capacity:')} </b> ${slot_info.service_unit_capacity} </span>`;
             }
@@ -3484,6 +3716,99 @@ const enhancedStyles = `
     -webkit-border-radius: 6px 0 6px 6px;
     -moz-border-radius: 6px 0 6px 6px;
     border-radius: 6px 0 6px 6px;
+}
+
+.appointment-event .appt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.appointment-event .appt-title {
+    font-weight: 600;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.appointment-event .appt-duration {
+    font-size: 11px;
+    color: rgba(17, 24, 39, 0.7);
+}
+.appointment-event .appt-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    line-height: 16px;
+}
+.appointment-event .appt-meta i {
+    margin-right: 4px;
+    color: rgba(31, 41, 55, 0.75);
+}
+.appointment-event .appt-finance {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.appointment-event .appt-finance-line {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: rgba(30, 64, 175, 0.85);
+}
+.appointment-event .appt-finance-line .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    line-height: 14px;
+}
+.appointment-event .appt-invoice-ref {
+    font-size: 11px;
+    color: #475569;
+}
+
+.appointment-event--tight .appt-meta {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.appointment-event--condensed .appt-note {
+    display: none !important;
+}
+.appointment-event--condensed .appt-invoice-ref {
+    display: none !important;
+}
+
+.appointment-event--tight .appt-finance {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.appointment-event--tight .appt-finance-line {
+    border-radius: 4px;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 14px;
+}
+.appointment-event--tight .appt-invoice-ref {
+    display: none !important;
+}
+.appointment-event--tight .appt-header {
+    margin-right: 8px;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.appointment-event--tight .appt-title {
+    font-size: 12px;
+    max-width: 100%;
+}
+.appointment-event--tight .appt-duration {
+    font-size: 10px;
+    position: absolute;
+    right: 5px;
 }
 </style>
 `;
