@@ -92,14 +92,96 @@
         const $enc = $(ENCOUNTER_SELECTOR).find(".item-anchor");
         if (!$enc.length) return;
         $enc.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
+        $enc.css({
+            "color": "",
+            "background": "",
+            "border-left": "",
+            "font-weight": "",
+            "box-shadow": ""
+        });
+        // Remove any status indicator
+        $enc.find(".encounter-status-indicator").remove();
     }
 
-    function enableEncounter(patient) {
+    async function enableEncounter(patient) {
         const $enc = $(ENCOUNTER_SELECTOR).find(".item-anchor");
         if (!$enc.length) return;
-        const url = `/app/patient-encounter/new?patient=${encodeURIComponent(patient.patient)}${patient.appointment ? "&appointment=" + encodeURIComponent(patient.appointment) : ""
-            }`;
-        $enc.removeClass("hidden").attr("href", url).attr("title", `Start encounter for ${patient.patient_name}`);
+        
+        // Remove any existing status indicator
+        $enc.find(".encounter-status-indicator").remove();
+        
+        // Check if an encounter exists for this appointment
+        if (patient.appointment) {
+            try {
+                const result = await frappe.call({
+                    method: "frappe.client.get_list",
+                    args: {
+                        doctype: "Patient Encounter",
+                        filters: {
+                            appointment: patient.appointment
+                        },
+                        fields: ["name", "docstatus"],
+                        limit: 1
+                    }
+                });
+                
+                if (result.message && result.message.length > 0) {
+                    const encounter = result.message[0];
+                    // Encounter exists - style it prominently in green
+                    $enc.removeClass("hidden")
+                        .attr("href", "#")
+                        .attr("title", `View existing encounter for ${patient.patient_name}`)
+                        .css({
+                            "color": "#155724",
+                            "background": "linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%)",
+                            "border-left": "4px solid #28a745",
+                            "font-weight": "600",
+                            "box-shadow": "0 2px 4px rgba(40, 167, 69, 0.2)"
+                        });
+                    
+                    // Add click handler to navigate without full page reload
+                    $enc.off("click").on("click", function(e) {
+                        e.preventDefault();
+                        frappe.set_route("Form", "Patient Encounter", encounter.name);
+                    });
+                    
+                    // Add a checkmark indicator
+                    const $label = $enc.find(".sidebar-item-label");
+                    if ($label.length && !$enc.find(".encounter-status-indicator").length) {
+                        $label.append(
+                            $("<i>", {
+                                class: "fa fa-check-circle encounter-status-indicator",
+                                style: "margin-left: 8px; font-size: 12px; color: #28a745;"
+                            })
+                        );
+                    }
+                    return;
+                }
+            } catch (err) {
+                console.error("Failed to check for existing encounter:", err);
+            }
+        }
+        
+        // No encounter exists - link to create new one with default styling
+        $enc.removeClass("hidden")
+            .attr("href", "#")
+            .attr("title", `Start new encounter for ${patient.patient_name}`)
+            .css({
+                "color": "",
+                "background": "",
+                "border-left": "",
+                "font-weight": "",
+                "box-shadow": ""
+            });
+        
+        // Add click handler to navigate without full page reload
+        $enc.off("click").on("click", function(e) {
+            e.preventDefault();
+            frappe.set_route("Form", "Patient Encounter", "new", {
+                patient: patient.patient,
+                appointment: patient.appointment
+            });
+        });
     }
 
     // --- Context activation
@@ -360,6 +442,16 @@
         } else {
             window._appointments_redirected = false;
         }
+        
+        // Re-render sidebar after route change to maintain waiting list
+        if (initialized) {
+            setTimeout(() => {
+                if (lastWaitingPatients.length > 0) {
+                    renderWaitingPatients(lastWaitingPatients);
+                    restorePatientContext();
+                }
+            }, 100);
+        }
     });
 
     frappe.after_ajax(() => {
@@ -367,6 +459,7 @@
             initSidebar();
         } else {
             if (lastWaitingPatients.length > 0) {
+                renderWaitingPatients(lastWaitingPatients);
                 restorePatientContext();
             }
         }
