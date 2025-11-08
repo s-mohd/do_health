@@ -1690,6 +1690,8 @@ def get_waiting_list():
 			pa.patient,
 			p.image AS patient_image,
 			pa.practitioner,
+			pa.practitioner_name,
+			pa.custom_visit_status,
 			at.arrival_time,
 			pa.appointment_time,
 			pa.appointment_date
@@ -1704,7 +1706,7 @@ def get_waiting_list():
 			ON pa.patient = p.name
 		WHERE pa.custom_visit_status = 'Arrived' 
 		AND pa.appointment_date = CURDATE()
-		ORDER BY at.arrival_time DESC
+		ORDER BY pa.practitioner_name, at.arrival_time DESC
 		LIMIT 5;
 
 	""", as_dict=True)

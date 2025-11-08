@@ -272,6 +272,17 @@ body.offcanvas-open {
     --bs-popover-max-width: unset;
 }
 
+/* Active waiting patient highlight */
+.active-waiting-patient .item-anchor {
+    background: linear-gradient(90deg, rgba(105, 165, 255, 0.15) 0%, rgba(105, 165, 255, 0.05) 100%) !important;
+    border-left: 3px solid #69a5ff !important;
+}
+
+.active-waiting-patient .sidebar-item-label {
+    font-weight: 600 !important;
+    color: #1a73e8 !important;
+}
+
 /* Responsive adjustments */
 @media (max-width: 576px) {
     .offcanvas-sidebar {
