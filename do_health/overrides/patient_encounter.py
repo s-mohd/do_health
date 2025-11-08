@@ -101,16 +101,16 @@ class CustomPatientEncounter(PatientEncounter):
 				values_to_return['vital_signs_layout'] = vital_layout
 
 		# Get Patient History Tab
-		if settings.show_vital_signs:
+		if settings.show_patient_history:
 			history_layout = list(settings.patient_history_tab_layout)
 			for field in history_layout:
 				field.value = patient.get(field.fieldname, '')
 			values_to_return['history_layout'] = history_layout
 
 		# Get Dental Charts Tab
-		if settings.show_dental_charts:
-			dental_charts = frappe.db.get_list('Dental Charting', filters={'patient': self.patient}, order_by='date desc', pluck='name')
-			dental_chart_docs = [frappe.get_doc('Dental Charting', d) for d in dental_charts]
-			values_to_return['dental_charts'] = dental_chart_docs
+		# if settings.show_dental_charts:
+		# 	dental_charts = frappe.db.get_list('Dental Charting', filters={'patient': self.patient}, order_by='date desc', pluck='name')
+		# 	dental_chart_docs = [frappe.get_doc('Dental Charting', d) for d in dental_charts]
+		# 	values_to_return['dental_charts'] = dental_chart_docs
 		
 		return values_to_return

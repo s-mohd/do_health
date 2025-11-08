@@ -9,7 +9,9 @@
   "label",
   "fieldname",
   "style",
-  "html"
+  "color",
+  "html",
+  "show_if_empty"
  ],
  "fields": [
   {
@@ -36,19 +38,32 @@
    "fieldname": "html",
    "fieldtype": "HTML",
    "label": "HTML"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_if_empty",
+   "fieldtype": "Check",
+   "label": "Show If Empty"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Select",
+   "label": "Color",
+   "options": "Blue\nGreen\nBlue Green\nPurple\nred\nOrange\nBrown"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-08-06 13:31:25.113784",
+ "modified": "2025-11-09 01:16:10.532978",
  "modified_by": "Administrator",
  "module": "Do Health",
  "name": "Tab Layout",
  "owner": "Administrator",
  "permissions": [],
  "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

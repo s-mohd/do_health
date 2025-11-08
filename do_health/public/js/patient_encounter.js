@@ -1,370 +1,333 @@
-frappe.ui.form.on('Patient Encounter', {
-	refresh: function (frm) {
-		// Remove existing elements if any
-		$('.offcanvas-wrapper').remove();
-		if (frm.doc.patient) {
-			createSideTabs(frm);
+frappe.provide('do_health.encounter_sidebar');
+
+do_health.encounter_sidebar = {
+	_render_lock: {},
+
+	async init(frm) {
+		const doctype = frm.doctype;
+		const name = frm.doc.name;
+		const key = `${doctype}-${name}`;
+
+		// Cancel any pending render for this form
+		if (this._render_lock?.[key]) {
+			clearTimeout(this._render_lock[key]);
+		} else if (!this._render_lock) {
+			this._render_lock = {};
 		}
+
+		// Debounce rendering to prevent race conditions
+		this._render_lock[key] = setTimeout(async () => {
+			const $wrapper = $(frm.$wrapper);
+			$wrapper.find('.offcanvas-wrapper').remove();
+
+			if (!frm.doc.patient) return;
+			if (frm._sidebar_initialized) return;
+			frm._sidebar_initialized = true;
+
+			frappe.dom.freeze('Loading sidebar...');
+			try {
+				const settings = await frappe.db.get_doc('Do Health Settings');
+				frappe.dom.unfreeze();
+				this.build_sidebar(frm, $wrapper, settings);
+			} catch (e) {
+				frappe.dom.unfreeze();
+				frappe.msgprint(__('Failed to load Do Health Settings: ') + e.message);
+			}
+		}, 200);
 	},
-	patient: function (frm) {
-		// Remove existing elements if any
-		$('.offcanvas-wrapper').remove();
-		if (frm.doc.patient) {
-			createSideTabs(frm);
+
+	build_sidebar(frm, $wrapper, settings) {
+		const html = `
+            <div class="offcanvas-wrapper">
+                <div class="vertical-tabs-container"></div>
+                <div class="custom-offcanvas">
+                    <div class="offcanvas-overlay"></div>
+                    <div class="offcanvas-sidebar">
+                        <div class="offcanvas-header">
+                            <h5 class="offcanvas-title"></h5>
+                            <button type="button" class="btn-edit btn btn-default icon-btn">Edit</button>
+                            <button type="button" class="btn-close"><i class="fa fa-times"></i></button>
+                        </div>
+                        <div class="offcanvas-body"></div>
+                    </div>
+                </div>
+            </div>`;
+		const $offcanvasWrapper = $(html).appendTo($wrapper);
+
+		const tabs = [];
+
+		// --- Vital Signs Tab
+		if (settings.show_vital_signs) {
+			tabs.push({
+				label: 'Vital Signs',
+				icon: 'fa fa-heartbeat',
+				layout: settings.vital_signs_tab_layout || [],
+				content: async () => {
+					const vital = await this.get_latest_vital_signs(frm.doc.appointment);
+					return this.render_tab_layout(settings.vital_signs_tab_layout, vital);
+				},
+				doctype: 'Vital Signs'
+			});
 		}
-	},
 
-});
+		// --- Patient History Tab
+		if (settings.show_patient_history) {
+			tabs.push({
+				label: 'Patient History',
+				icon: 'fa fa-history',
+				layout: settings.patient_history_tab_layout || [],
+				content: async () => {
+					const patient = await frappe.db.get_doc('Patient', frm.doc.patient);
+					return this.render_tab_layout(settings.patient_history_tab_layout, patient);
+				},
+				doctype: 'Patient'
+			});
+		}
 
-function createSideTabs(frm) {
-	$(`
-			<div class="offcanvas-wrapper">
-				<div class="vertical-tabs-container">
-					<!-- Tabs will be added here -->
-				</div>
-				<div class="custom-offcanvas">
-					<div class="offcanvas-overlay"></div>
-					<div class="offcanvas-sidebar">
-						<div class="offcanvas-header">
-							<h5 class="offcanvas-title"></h5>
-							<button type="button" class="btn-edit btn btn-default icon-btn" 
-							data-action="Edit"
-							>Edit
-							</button>
-							<button type="button" class="btn-close">
-								<i class="fa fa-times"></i>
-							</button>
-						</div>
-						<div class="offcanvas-body"></div>
-						<div class="offcanvas-footer"></div>
-					</div>
-				</div>
-			</div>
-		`).appendTo($(frm.$wrapper));
+		// --- Dental Chart Tab
+		if (settings.show_dental_charts) {
+			tabs.push({
+				label: 'Dental Chart',
+				svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M186.1 52.1C169.3 39.1 148.7 32 127.5 32C74.7 32 32 74.7 32 127.5l0 6.2c0 15.8 3.7 31.3 10.7 45.5l23.5 47.1c4.5 8.9 7.6 18.4 9.4 28.2l36.7 205.8c2 11.2 11.6 19.4 22.9 19.8s21.4-7.4 24-18.4l28.9-121.3C192.2 323.7 207 312 224 312s31.8 11.7 35.8 28.3l28.9 121.3c2.6 11.1 12.7 18.8 24 18.4s20.9-8.6 22.9-19.8l36.7-205.8c1.8-9.8 4.9-19.3 9.4-28.2l23.5-47.1c7.1-14.1 10.7-29.7 10.7-45.5l0-2.1c0-55-44.6-99.6-99.6-99.6c-24.1 0-47.4 8.8-65.6 24.6l-3.2 2.8 19.5 15.2c7 5.4 8.2 15.5 2.8 22.5s-15.5 8.2-22.5 2.8l-24.4-19-37-28.8z"/></svg>',
+				content: () => this.get_dental_chart_content(frm),
+				doctype: 'Dental Chart'
+			});
+		}
 
-	frm.call('get_side_tab_data')
-		.then(r => {
-			const settings = r.message.settings
-			// Add tabs
-			const tabs = [
-				...(settings.show_vital_signs ? [{
-					label: 'Vital Signs',
-					content: () => get_vitals_content(frm, r.message),
-					icon: 'fa fa-heartbeat',
-					// editor: encodeURIComponent(settings.vital_signs_editor)
-				}] : []),
-				...(settings.show_patient_history ? [{
-					label: 'Patient History',
-					content: () => get_history_content(frm),
-					icon: 'fa fa-history',
-					// editor: encodeURIComponent(settings.patietn_history_editor)
-				}] : []),
-				...(settings.show_dental_charts ? [{
-					label: 'Dental Chart',
-					content: () => get_dental_chart_content(frm, r.message),
-					svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--!Font Awesome Free v6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M186.1 52.1C169.3 39.1 148.7 32 127.5 32C74.7 32 32 74.7 32 127.5l0 6.2c0 15.8 3.7 31.3 10.7 45.5l23.5 47.1c4.5 8.9 7.6 18.4 9.4 28.2l36.7 205.8c2 11.2 11.6 19.4 22.9 19.8s21.4-7.4 24-18.4l28.9-121.3C192.2 323.7 207 312 224 312s31.8 11.7 35.8 28.3l28.9 121.3c2.6 11.1 12.7 18.8 24 18.4s20.9-8.6 22.9-19.8l36.7-205.8c1.8-9.8 4.9-19.3 9.4-28.2l23.5-47.1c7.1-14.1 10.7-29.7 10.7-45.5l0-2.1c0-55-44.6-99.6-99.6-99.6c-24.1 0-47.4 8.8-65.6 24.6l-3.2 2.8 19.5 15.2c7 5.4 8.2 15.5 2.8 22.5s-15.5 8.2-22.5 2.8l-24.4-19-37-28.8z"/></svg>',
-				}] : []),
-			];
+		// --- Render tabs
+		const $tabsContainer = $offcanvasWrapper.find('.vertical-tabs-container');
+		tabs.forEach(tab => {
+			const $tab = $(`
+                <button class="vertical-tab" data-tab="${tab.label}">
+                    ${tab.icon ? `<i class="${tab.icon}"></i>` : tab.svg}
+                    <span>${tab.label}</span>
+                </button>`);
+			$tab.appendTo($tabsContainer).on('click', async () => {
+				const content = await tab.content();
+				$offcanvasWrapper.data('active-tab', tab);
+				this.show_offcanvas($offcanvasWrapper, tab.label, content);
+			});
+		});
 
-			tabs.forEach(tab => {
-				$(`
-					<button class="vertical-tab" data-tab="${tab.label}">
-						${tab.icon ? `<i class="${tab.icon}"></i>` : tab.svg}
-						<span>${tab.label}</span>
-					</button>
-				`).appendTo('.vertical-tabs-container').click(() => {
-					if (tab.label === 'Vital Signs' && r.message.vital_signs_layout.length === 0) {
-						$('.btn-edit').text('Add');
-					}
-					else {
-						$('.btn-edit').text('Edit');
-					}
-					show_offcanvas(tab.label, tab.content());
+		// --- Events
+		$offcanvasWrapper.on('click', '.btn-close, .offcanvas-overlay', () => this.hide_offcanvas($offcanvasWrapper));
+		$offcanvasWrapper.on('keydown', (e) => { if (e.key === 'Escape') this.hide_offcanvas($offcanvasWrapper); });
+
+		// --- Edit button logic
+		$offcanvasWrapper.on('click', '.btn-edit', async () => {
+			const active = $offcanvasWrapper.data('active-tab');
+			if (!active) return;
+
+			if (active.doctype === 'Patient') {
+				const patient = await frappe.db.get_doc('Patient', frm.doc.patient);
+				await this.open_edit_dialog('Patient', patient, active.layout, async (values) => {
+					await frappe.call({
+						method: 'frappe.client.set_value',
+						args: { doctype: 'Patient', name: patient.name, fieldname: values }
+					});
+					frappe.show_alert({ message: __('Patient details updated'), indicator: 'green' });
+					const refreshed = await frappe.db.get_doc('Patient', patient.name);
+					const html = this.render_tab_layout(active.layout, refreshed);
+					this.show_offcanvas($offcanvasWrapper, active.label, html);
 				});
+			} else if (active.doctype === 'Vital Signs') {
+				const vital = await this.get_or_create_vital_sign(frm);
+				await this.open_edit_dialog('Vital Signs', vital, active.layout, async (values) => {
+					await frappe.call({
+						method: 'frappe.client.set_value',
+						args: { doctype: 'Vital Signs', name: vital.name, fieldname: values }
+					});
+					frappe.show_alert({ message: __('Vital Signs updated'), indicator: 'green' });
+					const refreshed = await frappe.db.get_doc('Vital Signs', vital.name);
+					const html = this.render_tab_layout(active.layout, refreshed);
+					this.show_offcanvas($offcanvasWrapper, active.label, html);
+				});
+			}
+		});
+	},
+
+	async get_meta_safe(doctype) {
+		return new Promise((resolve, reject) => {
+			frappe.model.with_doctype(doctype, () => {
+				const meta = frappe.get_meta(doctype);
+				if (meta && meta.fields?.length) {
+					resolve(meta);
+				} else {
+					reject(new Error(`Unable to load metadata for ${doctype}`));
+				}
+			});
+		});
+	},
+
+	async open_edit_dialog(doctype, doc, layout, onSave) {
+		const meta = await this.get_meta_safe(doctype);
+
+		const fields = layout
+			.filter(f => f.fieldname)
+			.map(f => {
+				const meta_field = meta.fields.find(m => m.fieldname === f.fieldname);
+				return {
+					label: f.label || (meta_field?.label ?? f.fieldname),
+					fieldname: f.fieldname,
+					fieldtype: meta_field?.fieldtype || 'Data',
+					options: meta_field?.options || undefined,
+					default: doc[f.fieldname] || '',
+					reqd: meta_field?.reqd || 0
+				};
 			});
 
-		})
-
-	// Close button event
-	$(document).on('click', '.btn-close, .offcanvas-overlay', () => {
-		hide_offcanvas();
-	});
-
-	// Close with ESC key
-	$(document).on('keydown', (e) => {
-		if (e.key === 'Escape') {
-			hide_offcanvas();
-		}
-	});
-
-	$(document).on('click', '.btn-edit', function (e) {
-		e.preventDefault();
-		// const actionCode = decodeURIComponent($(this).data('code'));
-		// const rowData = JSON.parse(decodeURIComponent($(this).data('row')));
-
-		try {
-			if ($(this).siblings('.offcanvas-title').text() === 'Vital Signs') {
-				// Create a function from the code string
-				const func = new Function('doc', settings.vital_signs_editor);
-				// Execute the function
-				func(frm.doc);
-			}
-			else if ($(this).siblings('.offcanvas-title').text() === 'Patient History') {
-				// Create a function from the code string
-				const func = new Function('doc', settings.patient_history_editor);
-				// Execute the function
-				func(frm.doc);
-			}
-		} catch (error) {
-			console.error('Error executing action code:', error);
-			frappe.msgprint(__('Error executing action: ') + error.message);
-		}
-	});
-}
-
-function show_offcanvas(title, content) {
-	// Pre-render content before showing to prevent layout shifts
-	$('.offcanvas-title').text(title);
-	$('.btn-edit').attr('data-tab', title);
-
-	// Force reflow before adding show class
-	document.body.clientWidth;
-	if (title === 'Dental Chart') {
-		$('.offcanvas-wrapper').addClass('full');
-		$('.btn-edit').hide();
-	}
-	else {
-		$('.offcanvas-body').html(content);
-		$('.offcanvas-wrapper').removeClass('full');
-		$('.btn-edit').show();
-	}
-
-	$('.offcanvas-wrapper').addClass('show');
-	$('body').addClass('offcanvas-open');
-
-	// Add active class with slight delay for smoother transition
-	setTimeout(() => {
-		$(`.vertical-tab[data-tab="${title}"]`).addClass('active')
-			.siblings().removeClass('active');
-	}, 50);
-}
-
-function hide_offcanvas() {
-	$('.offcanvas-wrapper').removeClass('show');
-	$('body').removeClass('offcanvas-open');
-
-	// Delay removing active class until transition completes
-	setTimeout(() => {
-		$('.vertical-tab').removeClass('active');
-	}, 300);
-}
-
-function get_vitals_content(frm, message) {
-	let vitals_html = '';
-	if (message.vital_signs_layout.length === 0) {
-		return `
-			<div class="p-3">
-				<h3>No vital signs recorded</h3>
-				<h5 class="text-muted">Click 'Add' to record vital signs.</h5>
-			</div>
-		`;
-	}
-	message.vital_signs_layout.forEach((field, index) => {
-		if (field.style === 'Card') {
-			if (index === 0 || vitals.layout[index - 1].style !== 'Card') {
-				vitals_html += `<div class="vitals-grid mt-3">`;
-			}
-			vitals_html += render_vital(field.label, field.value, '')
-		}
-		else {
-			if (index > 0 && vitals.layout[index - 1].style === 'Card') {
-				vitals_html += `</div>`;
-			}
-			vitals_html += `
-				<div class="mt-3">
-					<h6>Notes</h6>
-					<div class="vitals-notes">${field.value || 'No notes recorded'}</div>
-				</div>
-			`
-		}
-	})
-	return vitals_html;
-}
-
-function render_vital(label, value, unit) {
-	return `
-		<div class="vital-item mb-3 text-center">
-			<label class="form-label">${label}</label>
-			<div class="vital-value">
-				${value ? `<span class="bold">${value} ${unit}</span>` : '<span class="text-muted">Not recorded</span>'}
-			</div>
-		</div>
-	`;
-}
-
-function get_history_content(frm) {
-	return `
-		<div class="scroll-panel" style="width: 100%;">
-			<!-- Allergies Section -->
-			<div class="card p-0" id="allergies" style="background-color: #e1f5fe; border-color: #03a9f4;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Allergies <span id="allergies-count"></span></h5>
-				</div>
-				<div class="card-body">
-				<div id="no-allergies">
-					<div class="empty-state">
-					<h6>No Allergies</h6>
-					</div>
-				</div>
-				<div id="allergies-list" class="d-none">
-					<!-- Allergies items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-
-			<!-- Medical History Section -->
-			<div class="card p-0 mt-4" id="infected-diseases" style="background-color: #e8f5e9; border-color: #4caf50;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Medical History</h5>
-				</div>
-				<div class="card-body">
-				<div id="no-medical-history">
-					<div class="empty-state">
-					<h6>No Medical History</h6>
-					</div>
-				</div>
-				<div id="medical-history-list" class="d-none">
-					<!-- Medical history items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-
-			<!-- Surgical History Section -->
-			<div class="card p-0 mt-4" id="surgical-history" style="background-color: #f3e5f5; border-color: #9c27b0;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Surgical History<a class="fs-6 float-end d-none" id="see-all-surgical">See All</a></h5>
-				</div>
-				<div class="card-body">
-				<div id="no-surgical-history">
-					<div class="empty-state">
-					<h6>No Surgical History</h6>
-					</div>
-				</div>
-				<div id="surgical-history-list" class="d-none">
-					<!-- Surgical history items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-
-			<!-- Medications Section -->
-			<div class="card p-0 mt-4" id="medications" style="background-color: #fce4ec; border-color: #e91e63;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Medications (<span id="medications-count">0</span>)</h5>
-				</div>
-				<div class="card-body">
-				<div id="no-medications">
-					<div class="empty-state">
-					<h6>No Medications</h6>
-					</div>
-				</div>
-				<div id="medications-list" class="d-none">
-					<!-- Medication items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-
-			<!-- Habits/Social Section -->
-			<div class="card p-0 mt-4" id="habits" style="background-color: #e0f2f1; border-color: #009688;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Habits / Social</h5>
-				</div>
-				<div class="card-body">
-				<div id="no-habits">
-					<div class="empty-state">
-					<h6>No Habits / Social</h6>
-					</div>
-				</div>
-				<div id="habits-list" class="d-none">
-					<!-- Habit items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-
-			<!-- Family History Section -->
-			<div class="card p-0 mt-4" id="family-history" style="background-color: #efebe9; border-color: #795548;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Family History</h5>
-				</div>
-				<div class="card-body">
-				<div id="no-family-history">
-					<div class="empty-state">
-					<h6>No Family History</h6>
-					</div>
-				</div>
-				<div id="family-history-list" class="d-none">
-					<!-- Family history items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-
-			<!-- Risk Factors Section -->
-			<div class="card p-0 mt-4" id="risk-factors" style="background-color: #fbe9e7; border-color: #ff5722;">
-				<div class="card-header">
-				<h5 class="card-title mb-0">Risk Factors</h5>
-				</div>
-				<div class="card-body">
-				<div id="no-risk-factors">
-					<div class="empty-state">
-					<h6>No Risk Factors</h6>
-					</div>
-				</div>
-				<div id="risk-factors-list" class="d-none">
-					<!-- Risk factor items will be added here by JavaScript -->
-				</div>
-				</div>
-			</div>
-		</div>
-	`;
-}
-
-function get_dental_chart_content(frm, message) {
-	$('.offcanvas-body').html('');
-	console.log(message)
-
-	// Initialize dental chart
-	frappe.require([
-		'/assets/do_dental/js/dental_chart.js',
-		'/assets/do_dental/css/dental_chart.css'
-	], () => {
-		// Verify container exists
-		const $container = $('.offcanvas-body');
-		if (!$container || !$container.length) {
-			frappe.msgprint(__('Failed to find chart container'));
-			return;
-		}
-		let actualChart = null;
-		if (message.dental_charts.some(d => d.name === frm.doc.custom_dental_chart)) {
-			actualChart = message.dental_charts.filter(d => d.name === frm.doc.custom_dental_chart)[0];
-		}
-		else if (message.dental_charts.length > 0) {
-			actualChart = message.dental_charts[0];
-		}
-		else {
+		if (!fields.length) {
+			frappe.msgprint(__('No editable fields defined in layout.'));
 			return;
 		}
 
+		const d = new frappe.ui.Dialog({
+			title: __('Edit {0}', [doctype]),
+			fields,
+			primary_action_label: __('Save'),
+			primary_action(values) {
+				onSave(values);
+				d.hide();
+			}
+		});
+		d.show();
+	},
 
-		// Initialize chart
-		try {
-			new dental.DentalChart({
-				parent: $container,
-				doc: actualChart
-			});
-		} catch (e) {
-			console.error(e);
-			$container.html(`<div class="alert alert-danger">
-                Failed to load dental chart: ${e.message}
-            </div>`);
+	// --- Fetch latest Vital Signs or return null
+	async get_latest_vital_signs(appointment) {
+		if (!appointment) return {};
+		const res = await frappe.db.get_list('Vital Signs', {
+			filters: { appointment },
+			fields: ['name', 'temperature', 'pulse', 'bp_systolic', 'bp_diastolic', 'weight', 'signs_date', 'signs_time'],
+			order_by: 'creation desc',
+			limit: 1
+		});
+		return res.length ? res[0] : {};
+	},
+
+	// --- Get or create Vital Signs record for editing
+	async get_or_create_vital_sign(frm) {
+		const res = await frappe.db.get_list('Vital Signs', {
+			filters: { appointment: frm.doc.appointment },
+			fields: ['name'],
+			limit: 1
+		});
+		if (res.length) {
+			return await frappe.db.get_doc('Vital Signs', res[0].name);
 		}
-	});
-}
+		// Create a new one if missing
+		const new_doc = await frappe.call({
+			method: 'frappe.client.insert',
+			args: {
+				doc: {
+					doctype: 'Vital Signs',
+					appointment: frm.doc.appointment,
+					patient: frm.doc.patient,
+					signs_date: frappe.datetime.nowdate(),
+					signs_time: frappe.datetime.now_time()
+				}
+			}
+		});
+		return new_doc.message;
+	},
+
+	// --- Layout Renderer
+	render_tab_layout(layout = [], doc = null) {
+		if (!layout.length) return `<div class="p-3 text-center text-muted">No layout defined</div>`;
+		let html = '';
+		layout.forEach(field => {
+			const color = this.get_color(field.color);
+			const value = doc ? (doc[field.fieldname] || '') : '';
+			const is_empty = !value || value.toString().trim() === '';
+			if (is_empty && !field.show_if_empty) return;
+
+			if (field.style === 'Card') {
+				html += `
+                    <div class="card mb-3" style="background-color: ${color.bg}; border-color: ${color.border}; border-width: 1.5px; border-style: solid;">
+                        <div class="card-body text-center">
+                            <h6 class="fw-bold mb-2" style="color:${color.border}">${field.label}</h6>
+                            <div class="value fw-semibold" style="color:${color.border}">
+                                ${value || '<span class="text-muted small">Not recorded</span>'}
+                            </div>
+                        </div>
+                    </div>`;
+			} else if (field.style === 'Text') {
+				html += `
+                    <div class="mb-3" style="border-left: 3px solid ${color.border}; padding-left: 8px;">
+                        <h6 class="fw-bold mb-1" style="color:${color.border}">${field.label}</h6>
+                        <p class="text-muted small">${value || '<span class="text-muted small">Not recorded</span>'}</p>
+                    </div>`;
+			} else if (field.style === 'HTML') {
+				html += `<div class="mt-3">${field.html || ''}</div>`;
+			}
+		});
+		return html || `<div class="p-3 text-center text-muted">No data available</div>`;
+	},
+
+	get_color(name) {
+		const map = {
+			'Blue': { bg: '#e1f5fe', border: '#03a9f4' },
+			'Green': { bg: '#e8f5e9', border: '#4caf50' },
+			'Purple': { bg: '#f3e5f5', border: '#9c27b0' },
+			'Red': { bg: '#fce4ec', border: '#e91e63' },
+			'Blue Green': { bg: '#e0f2f1', border: '#009688' },
+			'Brown': { bg: '#efebe9', border: '#795548' },
+			'Orange': { bg: '#fbe9e7', border: '#ff5722' }
+		};
+		return map[name] || { bg: '#f8f9fa', border: '#ced4da' };
+	},
+
+	show_offcanvas($wrapper, title, content) {
+		$wrapper.find('.offcanvas-title').text(title);
+		$wrapper.find('.offcanvas-body').html(content);
+		$wrapper.addClass('show');
+		$('body').addClass('offcanvas-open');
+		setTimeout(() => {
+			$wrapper.find(`.vertical-tab[data-tab="${title}"]`).addClass('active').siblings().removeClass('active');
+		}, 50);
+	},
+
+	hide_offcanvas($wrapper) {
+		$wrapper.removeClass('show');
+		$('body').removeClass('offcanvas-open');
+		setTimeout(() => {
+			$wrapper.find('.vertical-tab').removeClass('active');
+		}, 300);
+	},
+
+	// --- Dental chart loader
+	get_dental_chart_content(frm) {
+		const $container = $('<div class="p-3"></div>');
+		frappe.require([
+			'/assets/do_dental/js/dental_chart.js',
+			'/assets/do_dental/css/dental_chart.css'
+		], () => {
+			frappe.db.get_list('Dental Chart', { fields: ['name', 'title'] }).then(charts => {
+				if (!charts.length) {
+					$container.html(`<div class="text-center text-muted">No dental chart available.</div>`);
+					return;
+				}
+				const chart = charts.find(d => d.name === frm.doc.custom_dental_chart) || charts[0];
+				try {
+					new dental.DentalChart({ parent: $container, doc: chart });
+				} catch (e) {
+					$container.html(`<div class="alert alert-danger">Error loading chart: ${e.message}</div>`);
+				}
+			});
+		});
+		return $container;
+	}
+};
+
+// --- Bind to Patient Encounter ---
+frappe.ui.form.on('Patient Encounter', {
+	refresh(frm) {
+		do_health.encounter_sidebar.init(frm);
+	},
+	patient(frm) {
+		if (frm.doc.patient) {
+			frm._sidebar_initialized = false;
+			do_health.encounter_sidebar.init(frm);
+		}
+	}
+});
