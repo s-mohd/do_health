@@ -14,6 +14,13 @@ frappe.after_ajax(() => {
         if (manual_switch) {
             // user explicitly clicked another app
             localStorage.setItem("last_chosen_app", app);
+            
+            // Refresh page when navigating to do_health to avoid bugs and lags
+            if (app === "do_health") {
+                window.location.reload();
+                return;
+            }
+            
             manual_switch = false; // reset flag
         } else {
             // auto-switch (route change etc.) → ignore and stick to saved app
