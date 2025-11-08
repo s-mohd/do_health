@@ -1139,6 +1139,9 @@ frappe.views.calendar["Patient Appointment"] = {
                             ${hasImage ? `<img class="img-thumbnail img-responsive" src="${imageSrc}">` : ''}
                         </div>
                         <div class="col-md-7" style="${hasImage ? "padding-left: 0px;" : ""}">
+                            <div class="label label-warning">
+                                ${statusLabel ? `${statusLabel}<br/>` : ''}
+                            </div>
                             ${appointmentType ? `<small><b>${__('Type')}:</b> ${appointmentType}</small><br/>` : ''}
                             ${visitReason ? `<small><b>${__('Reason')}:</b> ${visitReason}</small><br/>` : ''}
                             ${room ? `<small><b>${__('Room')}:</b> ${room}</small><br/>` : ''}
@@ -1146,21 +1149,17 @@ frappe.views.calendar["Patient Appointment"] = {
                             ${paymentType ? `<small><b>${__('Payment')}:</b> ${paymentType}</small><br/>` : ''}
                             ${billingInfoHtml}
                             ${insuranceInfoHtml}
-                            <small><div class="label label-warning">
-                                ${statusLabel ? `${statusLabel}<br/>` : ''}
-                            </div></small>
                         </div>
                     </div>
                 </div>
-                <div style="background-color: #D9D9D9;opacity: 0.9;" class="popover-footer">
-                    <div class="small text-left" data-popoverap="${event.id}">
-                        <span> Created by: ${created_by}</span>
-                        <span> on ${moment(event.extendedProps.creation).format('Do MMM')}</span>
-                        <div class="${event.extendedProps.modified_by != event.extendedProps.owner ? "" : "hidden"}">
-                            <span>Modified by: ${modified_by}</span>
-                            <span> on ${moment(event.extendedProps.modified).format('Do MMM')}</span>
-                        </div>
-                    </div>
+                <div style="background-color: #D9D9D9;opacity: 0.9;" class="popover-footer text-center">
+                    <small>
+                        <b>${__('Time')}:</b> 
+                        ${moment(event.start).format('h:mm A')} –> ${moment(event.end).format('h:mm A')}
+                    </small><br/>
+                    <small>
+                        <b>${__('Date')}:</b> ${moment(event.start).format('dddd, Do MMM YYYY')}
+                    </small>
                 </div>
             </div>
         `;
@@ -2875,6 +2874,7 @@ let check_and_set_availability = function (event, is_new = false) {
                 { fieldtype: 'Data', fieldname: 'patient_cpr', label: 'CPR', read_only: 1, default: event?.cpr ? event.cpr : '' },
                 { fieldtype: 'Data', fieldname: 'patient_mobile', label: 'Mobile', read_only: 1, default: event?.mobile ? event.mobile : '' },
                 { fieldtype: 'Section Break' },
+                { fieldtype: 'Select', fieldname: 'status', options: 'Scheduled\nRescheduled\nWalked In', label: 'Booking Type', default: event.status || 'Scheduled' },
                 { fieldtype: 'Link', fieldname: 'appointment_type', options: 'Appointment Type', reqd: 1, label: 'Appointment Type', default: initialAppointmentType },
                 { fieldtype: 'Data', fieldname: 'appointment_for', label: 'Appointment For', hidden: 1, default: initialAppointmentFor },
                 { fieldtype: 'Int', fieldname: 'duration', label: 'Duration', default: initialDuration },
@@ -2898,6 +2898,7 @@ let check_and_set_availability = function (event, is_new = false) {
                 let data = {
                     'patient': d.get_value('patient'),
                     'custom_appointment_category': d.get_value('appointment_category'),
+                    'status': d.get_value('status'),
                     'appointment_type': d.get_value('appointment_type'),
                     'appointment_for': d.get_value('appointment_for'),
                     'duration': d.get_value('duration'),
@@ -2927,6 +2928,7 @@ let check_and_set_availability = function (event, is_new = false) {
                         'doctype': 'Patient Appointment',
                         'patient': data.patient,
                         'custom_appointment_category': data.custom_appointment_category,
+                        'status': data.status,
                         'appointment_type': data.appointment_type,
                         'appointment_for': data.appointment_for,
                         'duration': data.duration,
@@ -2998,6 +3000,9 @@ let check_and_set_availability = function (event, is_new = false) {
                             }
                             if (data.custom_appointment_category !== latest_doc.custom_appointment_category) {
                                 updateQueue.push(() => updateField('custom_appointment_category', data.custom_appointment_category));
+                            }
+                            if (data.status !== latest_doc.status) {
+                                updateQueue.push(() => updateField('status', data.status));
                             }
                             if (data.appointment_type !== latest_doc.appointment_type) {
                                 updateQueue.push(() => updateField('appointment_type', data.appointment_type));
@@ -3115,15 +3120,18 @@ let check_and_set_availability = function (event, is_new = false) {
             });
 
             if (!is_new) {
+                d.set_df_property('status', 'read_only', 1);
                 d.set_values({
                     'patient': event.patient,
                     'appointment_category': event.custom_appointment_category,
+                    'status': event.status,
                     'appointment_type': event.appointment_type,
                     'duration': event.duration,
                     'confirmed': event.custom_confirmed,
                     'reminded': event.reminded,
                     'custom_visit_reason': event.custom_visit_reason,
                     'branch': event.custom_branch,
+                    'service_unit': event.service_unit,
                     'notes': event.notes,
                 });
             }

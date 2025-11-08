@@ -27,12 +27,13 @@ class CustomPatientAppointment(PatientAppointment):
 				"time": now_datetime()
 			})
 
-		current_date = self.get('date')
-		current_time = self.get('time')
-		old_date = self.get_db_value('date')
-		old_time = self.get_db_value('time')
-		if (current_date != old_date) or (current_time != old_time):
-			self.status = 'Rescheduled'
+		if not self.is_new():
+			current_date = self.get('appointment_date')
+			current_time = self.get('appointment_time')
+			old_date = self.get_db_value('appointment_date')
+			old_time = self.get_db_value('appointment_time')
+			if (current_date != old_date) or (current_time != old_time):
+				self.status = 'Rescheduled'
 
 	def insert_calendar_event(self):
 		if not self.practitioner:
