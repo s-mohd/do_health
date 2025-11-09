@@ -44,6 +44,7 @@ app_include_js = [
 	"/assets/do_health/js/bootstrap-popover-x.min.js",
 	"/assets/do_health/js/humanize-duration.js",
 	"/assets/do_health/js/customscript.js",
+    "/assets/do_health/js/patient_watcher.js",
 	"/assets/frappe/node_modules/air-datepicker/dist/js/datepicker.min.js",
 	"/assets/frappe/node_modules/air-datepicker/dist/js/i18n/datepicker.en.js",
 	# "/assets/do_health/js/lib/fullcalendar/fullcalendar.min.js"
