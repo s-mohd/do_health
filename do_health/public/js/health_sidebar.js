@@ -81,6 +81,8 @@
     function savePatientContext(patient) {
         if (!patient) return;
         localStorage.setItem(ACTIVE_PATIENT_STORAGE_KEY, JSON.stringify(patient));
+
+        window.dispatchEvent(new StorageEvent("storage", { key: "do_health_active_patient" }));
     }
 
     let lastBannerCreatedAt = 0;
@@ -690,8 +692,8 @@
                 "box-shadow": ""
             });
 
-        $chart.removeClass("hidden").attr("href", "#").attr("title", `Show Dental Chart for ${patient.patient_name}`)
-        $doc.removeClass("hidden").attr("href", "#").attr("title", `Show Documents for ${patient.patient_name}`)
+        $chart.removeClass("hidden").attr("href", "/app/chart").attr("title", `Show Dental Chart for ${patient.patient_name}`)
+        $doc.removeClass("hidden").attr("href", "/app/patient-documents").attr("title", `Show Documents for ${patient.patient_name}`)
 
 
         // Add click handler to navigate without full page reload

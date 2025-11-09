@@ -765,4 +765,47 @@ frappe.pages["patient-documents"].on_page_load = function (wrapper) {
 			return null;
 		}
 	}
+
+	// --- Watch for external patient changes in localStorage
+	let previousPatient = getActivePatientFromStorage();
+	let patientWatcherTimer = null;
+
+	function startWatchingPatient() {
+		// Use the native storage event (fires across tabs) and polling (same tab)
+		window.addEventListener("storage", handlePatientChange);
+
+		// Fallback polling (for same-tab updates since storage events
+		// only fire between different tabs)
+		patientWatcherTimer = setInterval(() => {
+			checkPatientChange();
+		}, 1500);
+	}
+
+	function stopWatchingPatient() {
+		window.removeEventListener("storage", handlePatientChange);
+		if (patientWatcherTimer) clearInterval(patientWatcherTimer);
+	}
+
+	function handlePatientChange(e) {
+		if (e.key !== ACTIVE_PATIENT_STORAGE_KEY) return;
+		checkPatientChange();
+	}
+
+	function checkPatientChange() {
+		const currentPatient = getActivePatientFromStorage();
+		const currentValue = currentPatient || "";
+		const previousValue = previousPatient || "";
+
+		if (currentValue !== previousValue) {
+			console.log(`[patient-documents] Active patient changed from "${previousValue}" to "${currentValue}"`);
+			previousPatient = currentValue;
+			onPatientChange(currentValue);
+		}
+	}
+
+	// Start the watcher when page loads
+	startWatchingPatient();
+
+	// Stop watcher when navigating away
+	$(window).on("beforeunload", () => stopWatchingPatient());
 };
