@@ -6,7 +6,6 @@ app_publisher = "Sayed Mohamed"
 app_description = "an extention for the frappe healthcare app"
 app_email = "sayed10998@gmail.com"
 app_license = "mit"
-app_version = "1.0.18"
 
 # Apps
 # ------------------
