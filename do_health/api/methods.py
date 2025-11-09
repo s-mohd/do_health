@@ -1325,6 +1325,7 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	appo.owner 						as owner,
 	appo.modified_by 				as modified_by,
 	appo.custom_visit_status 		as status,
+	appo.status				 		as booking_type,
 	appo.notes 						as note,
 	appo.custom_payment_type		as payment_type,
 	appo.custom_billing_status		as billing_status,

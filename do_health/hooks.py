@@ -187,7 +187,7 @@ doc_events = {
         "on_update": "do_health.api.events.patient_update"
     },
     'Patient Appointment':{
-        "after_insert": "do_health.api.events.patient_appointment_inserted",
+        "before_insert": "do_health.api.events.patient_appointment_inserting",
         "on_update": "do_health.api.events.patient_appointment_update"
     },
     'Patient Encounter':{

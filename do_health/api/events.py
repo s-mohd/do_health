@@ -13,14 +13,13 @@ def patient_update(doc, method=None):
 def medication_request_update(doc, method=None):
     frappe.publish_realtime("medication_request_updated", doc)
 
-def patient_appointment_inserted(doc, method=None):
+def patient_appointment_inserting(doc, method=None):
     if doc.status == 'Walked In':
         doc.custom_visit_status = 'Arrived'
         doc.append("custom_appointment_time_logs", {
             "status": 'Arrived',
             "time": datetime.datetime.now()
         })
-        doc.save()
         # frappe.db.set_value("Patient Appointment", doc.appointment, "custom_visit_status", "Arrived")
 
 def patient_appointment_update(doc, method=None):
