@@ -6,6 +6,7 @@
     const SELECTED_SECTION_SELECTOR = `#${SELECTED_SECTION_ID}`;
     const ENCOUNTER_SELECTOR = `.sidebar-item-container[item-name='Encounter']`;
     const DOCUMENTS_SELECTOR = `.sidebar-item-container[item-name='Documents']`;
+    const CHART_SELECTOR = `.sidebar-item-container[item-name='Patient Chart']`;
     const APPOINTMENTS_SELECTOR = `.sidebar-item-container[item-name='Appointments']`;
     const DEFAULT_PATIENT_AVATAR = null; // Will use icon fallback instead
     const TIMER_UPDATE_DELAY = 10000; // Update timers every 10 seconds
@@ -88,7 +89,7 @@
     function clearPatientContext() {
         localStorage.removeItem(ACTIVE_PATIENT_STORAGE_KEY);
         $(".active-waiting-patient").removeClass("active-waiting-patient");
-        disableEncounterAndDocuments();
+        disableSidebarActions();
     }
 
     // --- Patient Info Banner
@@ -591,7 +592,7 @@
     }
 
     // --- Encounter workspace control
-    function disableEncounterAndDocuments() {
+    function disableSidebarActions() {
         const $enc = $(ENCOUNTER_SELECTOR).find(".item-anchor");
         if (!$enc.length) return;
         $enc.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
@@ -608,19 +609,17 @@
         const $doc = $(DOCUMENTS_SELECTOR).find(".item-anchor");
         if (!$doc.length) return;
         $doc.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
-        $doc.css({
-            "color": "",
-            "background": "",
-            "border-left": "",
-            "font-weight": "",
-            "box-shadow": ""
-        });
+
+        const $chart = $(CHART_SELECTOR).find(".item-anchor");
+        if (!$chart.length) return;
+        $chart.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
 
     }
 
-    async function enableEncounterAndDocuments(patient) {
+    async function enableSidebarActions(patient) {
         const $enc = $(ENCOUNTER_SELECTOR).find(".item-anchor");
         const $doc = $(DOCUMENTS_SELECTOR).find(".item-anchor");
+        const $chart = $(CHART_SELECTOR).find(".item-anchor");
         if (!$enc.length) return;
 
         // Remove any existing status indicator
@@ -691,7 +690,9 @@
                 "box-shadow": ""
             });
 
-        $doc.removeClass("hidden")
+        $chart.removeClass("hidden").attr("href", "#").attr("title", `Show Dental Chart for ${patient.patient_name}`)
+        $doc.removeClass("hidden").attr("href", "#").attr("title", `Show Documents for ${patient.patient_name}`)
+
 
         // Add click handler to navigate without full page reload
         $enc.off("click").on("click", function (e) {
@@ -748,18 +749,18 @@
         savePatientContext(normalized);
         $(".active-waiting-patient").removeClass("active-waiting-patient");
         $(`[data-patient='${normalized.patient}']`).addClass("active-waiting-patient");
-        enableEncounterAndDocuments(normalized);
+        enableSidebarActions(normalized);
     }
 
     function restorePatientContext() {
         const saved = getSavedPatientContext();
         if (!saved) {
-            disableEncounterAndDocuments();
+            disableSidebarActions();
             return;
         }
         $(".active-waiting-patient").removeClass("active-waiting-patient");
         $(`[data-patient='${saved.patient}']`).addClass("active-waiting-patient");
-        enableEncounterAndDocuments(saved);
+        enableSidebarActions(saved);
     }
 
     // --- Waiting patients
