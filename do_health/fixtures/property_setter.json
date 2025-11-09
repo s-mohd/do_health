@@ -302,5 +302,53 @@
   "property_type": "Check",
   "row_name": null,
   "value": "0"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Patient Encounter",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "insurance_section",
+  "is_system_generated": 0,
+  "modified": "2025-11-09 06:51:24.664942",
+  "module": "Do Health",
+  "name": "Patient Encounter-insurance_section-hidden",
+  "property": "hidden",
+  "property_type": "Check",
+  "row_name": null,
+  "value": "1"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Patient Encounter",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocType",
+  "field_name": null,
+  "is_system_generated": 0,
+  "modified": "2025-11-09 06:51:24.632916",
+  "module": "Do Health",
+  "name": "Patient Encounter-main-field_order",
+  "property": "field_order",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "[\"naming_series\", \"title\", \"appointment\", \"appointment_type\", \"custom_appointment_category\", \"patient\", \"patient_name\", \"patient_sex\", \"patient_age\", \"inpatient_record\", \"inpatient_status\", \"column_break_6\", \"company\", \"status\", \"encounter_date\", \"encounter_time\", \"practitioner\", \"practitioner_name\", \"medical_department\", \"google_meet_link\", \"invoiced\", \"submit_orders_on_save\", \"sb_symptoms\", \"symptoms\", \"custom_symptom_duration\", \"custom_symptoms_notes\", \"symptoms_in_print\", \"get_applicable_treatment_plans\", \"physical_examination\", \"diagnosis\", \"custom_differential_diagnosis\", \"custom_diagnosis_note\", \"diagnosis_in_print\", \"custom_illness_progression_section\", \"custom_illness_progression\", \"sb_source\", \"source\", \"column_break_27\", \"referring_practitioner\", \"insurance_section\", \"insurance_policy\", \"insurance_coverage\", \"column_break_35\", \"insurance_payor\", \"coverage_status\", \"codification\", \"codification_table\", \"sb_drug_prescription\", \"drug_prescription\", \"sb_test_prescription\", \"lab_test_prescription\", \"custom_physical_examination\", \"custom_other_examination\", \"sb_procedures\", \"procedure_prescription\", \"custom_annotations\", \"rehabilitation_section\", \"therapies\", \"section_break_33\", \"custom_attachments\", \"encounter_comment\", \"sb_refs\", \"amended_from\", \"encounter_details_tab\", \"order_history_html\", \"encounter_details\", \"notes_tab\", \"clinical_notes\"]"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Healthcare Service Unit",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocType",
+  "field_name": null,
+  "is_system_generated": 0,
+  "modified": "2025-11-09 06:51:24.577219",
+  "module": "Do Health",
+  "name": "Healthcare Service Unit-main-field_order",
+  "property": "field_order",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "[\"healthcare_service_unit_name\", \"is_group\", \"service_unit_type\", \"allow_appointments\", \"overlap_appointments\", \"service_unit_capacity\", \"inpatient_occupancy\", \"occupancy_status\", \"room_status\", \"column_break_9\", \"company\", \"warehouse\", \"custom_background_color\", \"custom_text_color\", \"tree_details_section\", \"parent_healthcare_service_unit\", \"lft\", \"rgt\", \"old_parent\", \"contact_and_address_tab\", \"address_and_contact_section\", \"address_html\", \"column_break_10\", \"contact_html\", \"connections_tab\", \"custom_checkin_details\", \"checked_in\", \"custom_slot_based_token\"]"
  }
 ]
