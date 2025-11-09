@@ -12,6 +12,8 @@ const CONFIG = {
     RESOURCE_AREA_WIDTH: '75px'
 };
 
+const ROOM_UNASSIGNED_RESOURCE = '__room_unassigned__';
+
 // Quick visit status shortcuts surfaced in the context menu
 const VISIT_STATUS_OPTIONS = [
     { value: 'Scheduled', label: 'Scheduled', icon: 'fa-calendar' },
@@ -38,13 +40,17 @@ const ACTION_MENU_ITEMS = [
 frappe.views.calendar["Patient Appointment"] = {
     // State management
     state: {
-        showDoctorsOnly: false,
         showcancelled: false,
         currentView: 'resourceTimeGridDay',
         resources: [],
         availabilityCache: {},
         lastViewInfo: null,
-        unavailableByResourceDate: {}
+        unavailableByResourceDate: {},
+        resourceMode: 'doctors',
+        resourceFilters: {
+            doctors: { showAll: false },
+            rooms: { showAll: true }
+        }
     },
 
     // Get CSS class names based on status
@@ -95,7 +101,7 @@ frappe.views.calendar["Patient Appointment"] = {
         headerToolbar: {
             left: "jumpToNow searchAppointments",
             center: "title",
-            right: "doctors cancelled toggleSide"
+            right: "doctors rooms cancelled toggleSide"
         },
 
         titleFormat: {
@@ -105,6 +111,8 @@ frappe.views.calendar["Patient Appointment"] = {
         },
 
         eventDataTransform: function (eventData) {
+            const calendarView = frappe.views.calendar["Patient Appointment"];
+            const resourceMode = calendarView?.state?.resourceMode || 'doctors';
             const {
                 name,
                 customer,
@@ -116,75 +124,59 @@ frappe.views.calendar["Patient Appointment"] = {
                 ...extendedProps
             } = eventData;
 
+            const practitionerId = resource;
+            const roomResourceId = extendedProps.room_id || extendedProps.service_unit_id || null;
+            const resourceId = resourceMode === 'rooms'
+                ? (roomResourceId || ROOM_UNASSIGNED_RESOURCE)
+                : practitionerId;
+
+            const enhancedProps = Object.assign({}, extendedProps, {
+                practitioner_id: practitionerId,
+                room_resource_id: roomResourceId
+            });
+
             return {
                 id: name,
                 title: customer,
                 start: starts_at,
                 end: ends_at,
-                resourceId: resource,
+                resourceId,
                 backgroundColor: background_color,
                 textColor: text_color,
-                extendedProps,
-                classNames: frappe.views.calendar["Patient Appointment"].getEventClassNames(extendedProps.status)
+                extendedProps: enhancedProps,
+                classNames: calendarView.getEventClassNames(enhancedProps.status)
             };
         },
 
         resources: function (fetchInfo, successCallback, failureCallback) {
-            const cacheKey = 'practitioner_resources';
+            const calendarView = frappe.views.calendar["Patient Appointment"];
+            const mode = calendarView?.state?.resourceMode || 'doctors';
+            const cacheKey = mode === 'rooms' ? 'service_unit_resources' : 'practitioner_resources';
             const cacheTime = 5 * 60 * 1000; // 5 minutes cache
 
-            // Check cache first
-            const cached = frappe.views.calendar["Patient Appointment"].getCachedResources(cacheKey, cacheTime);
+            const cached = calendarView.getCachedResources(cacheKey, cacheTime);
             if (cached) {
-                const calendarView = frappe.views.calendar["Patient Appointment"];
                 calendarView.state.resources = cached;
                 successCallback(cached);
-                if (calendarView.state.lastViewInfo) {
-                    calendarView.ensureUnavailableSlotStyles();
-                    calendarView.markUnavailableSlots(calendarView.state.lastViewInfo).catch(console.warn);
-                }
+                calendarView.afterResourcesLoaded();
                 return;
             }
 
-            frappe.call({
-                method: 'frappe.client.get_list',
-                args: {
-                    doctype: 'Healthcare Practitioner',
-                    filters: [["Healthcare Practitioner", "status", "=", "Active"]],
-                    fields: [
-                        'name',
-                        'first_name',
-                        'custom_background_color',
-                        'custom_text_color'
-                    ],
-                },
-                callback: (r) => {
-                    const calendarView = frappe.views.calendar["Patient Appointment"];
-                    const list = Array.isArray(r.message) ? r.message : [];
-                    const resources = list.map(practitioner => ({
-                        id: practitioner.name,
-                        title: practitioner.first_name,
-                        backgroundColor: practitioner.custom_background_color,
-                        textColor: practitioner.custom_text_color,
-                        extendedProps: {
-                            order: 1,
-                            background_color: practitioner.custom_background_color
-                        }
-                    }));
+            const loader = mode === 'rooms'
+                ? calendarView.loadRoomResources.bind(calendarView)
+                : calendarView.loadPractitionerResources.bind(calendarView);
 
+            loader()
+                .then(resources => {
                     calendarView.state.resources = resources;
-
-                    // Cache the results
                     calendarView.cacheResources(cacheKey, resources);
                     successCallback(resources);
-
-                    if (calendarView.state.lastViewInfo) {
-                        calendarView.ensureUnavailableSlotStyles();
-                        calendarView.markUnavailableSlots(calendarView.state.lastViewInfo).catch(console.warn);
-                    }
-                },
-                error: () => failureCallback()
-            });
+                    calendarView.afterResourcesLoaded();
+                })
+                .catch((error) => {
+                    console.error('Unable to load resources', error);
+                    failureCallback();
+                });
         },
 
         // resource styling
@@ -214,12 +206,15 @@ frappe.views.calendar["Patient Appointment"] = {
         // custom buttons
         customButtons: {
             doctors: {
-                text: 'All Doctors',
+                text: __('Doctors'),
                 click: function () {
-                    frappe.views.calendar["Patient Appointment"].state.showDoctorsOnly = !frappe.views.calendar["Patient Appointment"].state.showDoctorsOnly;
-                    console.log(frappe.views.calendar["Patient Appointment"].state)
-                    cur_list.calendar.fullCalendar.refetchEvents()
-                    cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
+                    frappe.views.calendar["Patient Appointment"].handleResourceButtonClick('doctors');
+                }
+            },
+            rooms: {
+                text: __('Rooms'),
+                click: function () {
+                    frappe.views.calendar["Patient Appointment"].handleResourceButtonClick('rooms');
                 }
             },
             cancelled: {
@@ -282,11 +277,29 @@ frappe.views.calendar["Patient Appointment"] = {
 
         // event drop handler
         eventDrop: function (info) {
+            const calendarView = frappe.views.calendar["Patient Appointment"];
+            const resourceLabel = calendarView.state.resourceMode === 'rooms' ? __('Room') : __('Practitioner');
+            const preserveTime = calendarView.state.resourceMode === 'rooms';
+            const originalStart = preserveTime ? (info.oldEvent?.start || info.event.start) : info.event.start;
+            const originalEnd = preserveTime ? (info.oldEvent?.end || info.event.end) : info.event.end;
+
+            if (preserveTime && info.oldEvent?.start && info.oldEvent?.end && typeof info.event.setDates === 'function') {
+                info.event.setDates(info.oldEvent.start, info.oldEvent.end);
+            }
+
+            const resourceNames = info.event.getResources().map(r => r.title).join(', ');
+            const summary = preserveTime
+                ? ''
+                : `New time: <strong>${info.event.start.toLocaleTimeString()}</strong><br>
+                 ${resourceLabel}: <strong>${resourceNames}</strong>`;
+            const prompt = preserveTime
+                ? __(`Assign <strong>{0}</strong> to this {1}?`, [info.event.title, resourceLabel.toLowerCase()])
+                : `Move <strong>${info.event.title}</strong> appointment?`;
+
             frappe.views.calendar["Patient Appointment"].showConfirmationDialog(
-                `Move <strong>${info.event.title}</strong> appointment?`,
-                `New time: <strong>${info.event.start.toLocaleTimeString()}</strong><br>
-                 Practitioner: <strong>${info.event.getResources().map(r => r.title).join(', ')}</strong>`,
-                () => updateEvent(info),
+                prompt,
+                summary,
+                () => updateEvent(info, { preserveTime, originalStart, originalEnd }),
                 () => info.revert()
             );
         },
@@ -366,6 +379,8 @@ frappe.views.calendar["Patient Appointment"] = {
             const calendarView = frappe.views.calendar["Patient Appointment"];
             calendarView.state.currentView = info.view.type;
             calendarView.state.lastViewInfo = info;
+            calendarView.updateResourceModeButtons(calendarView.state.resourceMode);
+            calendarView.updateResourceAreaHeader();
             calendarView.ensureUnavailableSlotStyles();
             calendarView.markUnavailableSlots(info).catch((err) => {
                 console.warn('Unable to mark unavailable slots', err);
@@ -719,6 +734,96 @@ frappe.views.calendar["Patient Appointment"] = {
         }
     },
 
+    setResourceMode: function (mode) {
+        const normalized = mode === 'rooms' ? 'rooms' : 'doctors';
+        this.ensureResourceFilterConfig(normalized);
+
+        if (this.state.resourceMode !== normalized) {
+            this.state.resourceMode = normalized;
+            this.state.resources = [];
+
+            if (normalized !== 'doctors') {
+                this.clearAvailabilityOverlays();
+                this.resetAvailabilityCache();
+            }
+
+            const calendar = cur_list?.calendar?.fullCalendar;
+            if (calendar) {
+                calendar.refetchResources();
+                calendar.refetchEvents();
+            } else if (typeof cur_list?.refresh === 'function') {
+                cur_list.refresh();
+            }
+        }
+
+        this.applyResourceFilterMode(normalized);
+        this.updateResourceAreaHeader();
+    },
+
+    handleResourceButtonClick: function (mode) {
+        const normalized = mode === 'rooms' ? 'rooms' : 'doctors';
+        if (this.state.resourceMode !== normalized) {
+            this.setResourceMode(normalized);
+            return;
+        }
+        this.ensureResourceFilterConfig(normalized);
+        if (mode !== 'rooms')
+            this.state.resourceFilters[normalized].showAll = !this.state.resourceFilters[normalized].showAll;
+        this.applyResourceFilterMode(normalized, { rerender: true });
+    },
+
+    applyResourceFilterMode: function (mode, opts) {
+        const options = opts || {};
+        const showAll = this.isShowAllResources(mode);
+        const shouldFilter = !showAll;
+        const calendar = cur_list?.calendar?.fullCalendar;
+        if (calendar?.setOption) {
+            calendar.setOption('filterResourcesWithEvents', shouldFilter);
+        }
+        this.updateResourceModeButtons(this.state.resourceMode);
+        if (options.rerender && calendar) {
+            calendar.refetchResources();
+            calendar.refetchEvents();
+        }
+    },
+
+    updateResourceModeButtons: function (activeMode) {
+        ['doctors', 'rooms'].forEach(mode => {
+            const button = $(`.fc-${mode}-button`);
+            if (!button.length) return;
+
+            const baseLabel = mode === 'rooms' ? __('Rooms') : __('Doctors');
+            const descriptor = this.isShowAllResources(mode) && mode !== 'rooms' ? __('(All)') : '';
+            button.text(`${baseLabel} ${descriptor}`);
+
+            if (mode === activeMode) {
+                button.addClass('btn-primary').removeClass('btn-secondary');
+            } else {
+                button.addClass('btn-secondary').removeClass('btn-primary');
+            }
+        });
+    },
+
+    updateResourceAreaHeader: function () {
+        const calendar = cur_list?.calendar?.fullCalendar;
+        if (calendar?.setOption) {
+            const label = this.state.resourceMode === 'rooms' ? __('Rooms') : __('Providers');
+            calendar.setOption('resourceAreaHeaderContent', label);
+        }
+    },
+
+    ensureResourceFilterConfig: function (mode) {
+        this.state.resourceFilters = this.state.resourceFilters || {};
+        if (!this.state.resourceFilters[mode]) {
+            this.state.resourceFilters[mode] = { showAll: mode === 'rooms' ? true : false };
+        }
+    },
+
+    isShowAllResources: function (mode) {
+        this.ensureResourceFilterConfig(mode);
+        return !!this.state.resourceFilters[mode].showAll;
+    },
+
     // Safely escape text for HTML output
     escapeHtml: function (value) {
         if (value === undefined || value === null) {
@@ -1055,6 +1160,115 @@ frappe.views.calendar["Patient Appointment"] = {
         });
     },
 
+    afterResourcesLoaded: function () {
+        this.applyResourceFilterMode(this.state.resourceMode || 'doctors');
+        if (this.state.resourceMode === 'doctors' && this.state.lastViewInfo) {
+            this.ensureUnavailableSlotStyles();
+            this.markUnavailableSlots(this.state.lastViewInfo).catch(console.warn);
+        } else if (this.state.resourceMode !== 'doctors') {
+            this.clearAvailabilityOverlays();
+        }
+        this.updateResourceAreaHeader();
+    },
+
+    loadPractitionerResources: function () {
+        return new Promise((resolve, reject) => {
+            frappe.call({
+                method: 'frappe.client.get_list',
+                args: {
+                    doctype: 'Healthcare Practitioner',
+                    filters: [["Healthcare Practitioner", "status", "=", "Active"]],
+                    fields: [
+                        'name',
+                        'first_name',
+                        'last_name',
+                        'custom_background_color',
+                        'custom_text_color'
+                    ],
+                    order_by: 'first_name asc',
+                    limit_page_length: 500
+                },
+                callback: (r) => {
+                    const list = Array.isArray(r.message) ? r.message : [];
+                    const resources = list.map(practitioner => {
+                        const displayName = practitioner.first_name || practitioner.last_name
+                            ? [practitioner.first_name, practitioner.last_name].filter(Boolean).join(' ')
+                            : practitioner.name;
+                        return {
+                            id: practitioner.name,
+                            title: displayName,
+                            backgroundColor: practitioner.custom_background_color,
+                            textColor: practitioner.custom_text_color,
+                            extendedProps: {
+                                type: 'practitioner',
+                                background_color: practitioner.custom_background_color
+                            }
+                        };
+                    });
+                    resolve(resources);
+                },
+                error: reject
+            });
+        });
+    },
+
+    loadRoomResources: function () {
+        return new Promise((resolve, reject) => {
+            frappe.call({
+                method: 'frappe.client.get_list',
+                args: {
+                    doctype: 'Healthcare Service Unit',
+                    filters: [
+                        ["Healthcare Service Unit", "is_group", "=", "0"],
+                        ["Healthcare Service Unit", "allow_appointments", "=", "1"]
+                    ],
+                    fields: [
+                        'name',
+                        'healthcare_service_unit_name',
+                        'custom_background_color',
+                        'custom_text_color',
+                        'service_unit_capacity'
+                    ],
+                    order_by: 'healthcare_service_unit_name asc',
+                    limit_page_length: 500
+                },
+                callback: (r) => {
+                    const list = Array.isArray(r.message) ? r.message : [];
+                    const resources = list.map(unit => {
+                        const bg = unit.custom_background_color || '#fde68a';
+                        const text = unit.custom_text_color || '#1f2937';
+                        return {
+                            id: unit.name,
+                            title: unit.healthcare_service_unit_name || unit.name,
+                            backgroundColor: bg,
+                            textColor: text,
+                            extendedProps: {
+                                type: 'room',
+                                capacity: unit.service_unit_capacity || null
+                            }
+                        };
+                    });
+                    resources.unshift(this.createUnassignedRoomResource());
+                    resolve(resources);
+                },
+                error: reject
+            });
+        });
+    },
+
+    createUnassignedRoomResource: function () {
+        return {
+            id: ROOM_UNASSIGNED_RESOURCE,
+            title: __('Unassigned'),
+            backgroundColor: '#e5e7eb',
+            textColor: '#1f2937',
+            extendedProps: {
+                type: 'room',
+                capacity: null
+            }
+        };
+    },
+
     // Create popover
     createPopover: function (element, event) {
         var created_by = formatUserName(event.extendedProps.owner);
@@ -1073,7 +1287,8 @@ frappe.views.calendar["Patient Appointment"] = {
         const hasCpr = Boolean(cprRaw);
         const appointmentType = event.extendedProps.appointment_type ? escapeHtml(event.extendedProps.appointment_type) : '';
         const visitReason = event.extendedProps.visit_reason ? escapeHtml(event.extendedProps.visit_reason) : '';
-        const room = event.extendedProps.room ? escapeHtml(event.extendedProps.room) : '';
+        const rawRoom = event.extendedProps.room || event.extendedProps.room_name || '';
+        const room = rawRoom ? escapeHtml(rawRoom) : '';
         const note = event.extendedProps.note ? escapeHtml(event.extendedProps.note) : '';
         const paymentType = event.extendedProps.payment_type ? escapeHtml(event.extendedProps.payment_type) : '';
         const statusLabel = event.extendedProps.status ? escapeHtml(event.extendedProps.status) : '';
@@ -1206,6 +1421,7 @@ frappe.views.calendar["Patient Appointment"] = {
             visit_reason,
             booking_type,
             room,
+            room_name,
             note,
             duration,
             billing_status,
@@ -1220,7 +1436,8 @@ frappe.views.calendar["Patient Appointment"] = {
         const safeStatus = status ? calendarView.escapeHtml(status) : '';
         const safeBookType = booking_type ? calendarView.escapeHtml(booking_type) : '';
         const safeReason = visit_reason ? calendarView.escapeHtml(visit_reason) : '';
-        const safeRoom = room ? calendarView.escapeHtml(room) : '';
+        const roomLabel = room || room_name || '';
+        const safeRoom = roomLabel ? calendarView.escapeHtml(roomLabel) : '';
         const safeNote = note ? calendarView.escapeHtml(note) : '';
 
         const billingValue = billing_status || (sales_invoice ? 'Invoiced' : 'Not Billed');
@@ -1277,31 +1494,6 @@ frappe.views.calendar["Patient Appointment"] = {
         };
     },
 
-    // Toggle view mode
-    toggleViewMode: function (mode) {
-        this.state.showDoctorsOnly = (mode === 'doctors');
-        this.state.showcancelled = (mode === 'cancelled');
-
-        cur_list.calendar.fullCalendar.refetchResources();
-        cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
-
-        // Update button states
-        this.updateButtonStates(mode);
-    },
-
-    // Update button states
-    updateButtonStates: function (activeMode) {
-        const modes = ['all', 'doctors', 'cancelled'];
-        modes.forEach(mode => {
-            const button = $(`.fc-${mode}-button`);
-            if (mode === activeMode) {
-                button.addClass('btn-primary').removeClass('btn-secondary');
-            } else {
-                button.addClass('btn-secondary').removeClass('btn-primary');
-            }
-        });
-    },
-
     // Toggle sidebar
     toggleSidebar: function () {
         $('.layout-side-section').toggleClass("hidden");
@@ -1335,11 +1527,13 @@ frappe.views.calendar["Patient Appointment"] = {
         } else if (typeof cur_list?.refresh === 'function') {
             cur_list.refresh();
         }
-        if (this.state?.lastViewInfo) {
+        if (this.state?.lastViewInfo && this.state.resourceMode === 'doctors') {
             this.ensureUnavailableSlotStyles();
             this.markUnavailableSlots(this.state.lastViewInfo).catch((err) => {
                 console.warn('Unable to refresh availability overlays', err);
             });
+        } else if (this.state?.resourceMode !== 'doctors') {
+            this.clearAvailabilityOverlays();
         }
     },
 
@@ -1485,6 +1679,11 @@ frappe.views.calendar["Patient Appointment"] = {
     },
 
     markUnavailableSlots: async function (info) {
+        if (this.state.resourceMode !== 'doctors') {
+            this.clearAvailabilityOverlays();
+            return;
+        }
+
         const calendar = cur_list?.calendar?.fullCalendar;
         if (!calendar || typeof calendar.addEvent !== 'function') {
             return;
@@ -1667,10 +1866,29 @@ function set_current_session(view) {
     sessionStorage.selected_view = view.type;
 }
 
-function updateEvent(info) {
-    const starttime_local = moment(info.event.start).format("H:mm:ss");
-    const endtime_local = moment(info.event.end).format("H:mm:ss");
-    const duration = moment(info.event.end).diff(moment(info.event.start), 'minutes');
+function updateEvent(info, options) {
+    const opts = options || {};
+    const preserveTime = !!opts.preserveTime;
+    const eventStart = opts.originalStart || info.event.start;
+    const eventEnd = opts.originalEnd || info.event.end;
+    const starttime_local = moment(eventStart).format("H:mm:ss");
+    const endtime_local = moment(eventEnd).format("H:mm:ss");
+    const duration = moment(eventEnd).diff(moment(eventStart), 'minutes');
+    const calendarView = frappe.views.calendar["Patient Appointment"];
+    const mode = calendarView?.state?.resourceMode || 'doctors';
+    const firstResource = info.event.getResources()[0];
+    const resourceId = firstResource?.id || null;
+    const resourceTitle = firstResource?.title || '';
+
+    if (mode === 'rooms') {
+        info.event.setExtendedProp('room_resource_id', resourceId === ROOM_UNASSIGNED_RESOURCE ? null : resourceId);
+        info.event.setExtendedProp('room', resourceId === ROOM_UNASSIGNED_RESOURCE ? '' : resourceTitle);
+        if (preserveTime && opts.originalStart && opts.originalEnd && typeof info.event.setDates === 'function') {
+            info.event.setDates(opts.originalStart, opts.originalEnd);
+        }
+    } else {
+        info.event.setExtendedProp('practitioner_id', resourceId);
+    }
 
     frappe.call({
         method: 'frappe.client.set_value',
@@ -1678,10 +1896,13 @@ function updateEvent(info) {
             doctype: 'Patient Appointment',
             name: info.event.id,
             fieldname: {
-                appointment_date: moment(info.event.start).format("YYYY-MM-DD"),
+                appointment_date: moment(eventStart).format("YYYY-MM-DD"),
                 appointment_time: starttime_local,
                 duration: duration,
-                practitioner: info.event.getResources()[0].id
+                practitioner: mode === 'doctors' ? resourceId : info.event.extendedProps.practitioner_id,
+                service_unit: mode === 'rooms'
+                    ? (resourceId === ROOM_UNASSIGNED_RESOURCE ? '' : resourceId)
+                    : (info.event.extendedProps.room_resource_id || '')
             }
         },
         callback: function (r) {

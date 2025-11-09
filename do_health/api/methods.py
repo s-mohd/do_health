@@ -1342,7 +1342,9 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	appo.custom_confirmed	 		as confirmed,
 	appo.reminded	 				as reminded,
 	TIMESTAMPADD(minute,appo.duration,appo.appointment_datetime) 	as ends_at,
-	appo.service_unit 				as room,
+	appo.service_unit 				as room_id,
+	COALESCE(su.healthcare_service_unit_name, appo.service_unit) as room,
+	su.healthcare_service_unit_name			as room_name,
 	0	 							as allDay,
 	null 							as procedure_name,
 	prov.custom_background_color 	as background_color,
@@ -1356,6 +1358,7 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	from `tabPatient Appointment` 	as appo
 	LEFT JOIN `tabPatient` 	as pat ON pat.name = appo.patient
 	LEFT JOIN `tabHealthcare Practitioner` as prov ON prov.name = appo.practitioner
+	LEFT JOIN `tabHealthcare Service Unit` as su ON su.name = appo.service_unit
 	WHERE appo.appointment_datetime >= "{start}" and appo.appointment_datetime < "{end}"  {condition}
 	"""
 	condition = ''
