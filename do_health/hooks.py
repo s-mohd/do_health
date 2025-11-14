@@ -32,6 +32,7 @@ app_include_css = [
     "/assets/do_health/css/bootstrap-popover-x.min.css",
     "/assets/frappe/node_modules/air-datepicker/dist/css/datepicker.min.css",
     "/assets/do_health/css/patient_encounter.css",
+    "/assets/do_health/css/health_sidebar.css",
 ]
 app_include_js = [
     "/assets/do_health/js/apps_switcher.js",
@@ -171,6 +172,8 @@ override_doctype_class = {
     "Test Patient Appointment": "do_health.overrides.test_patient_appointment.CustomTestPatientAppointment",
     "Patient Encounter": "do_health.overrides.patient_encounter.CustomPatientEncounter"
 }
+
+boot_session = "do_health.api.boot.boot_session"
 
 # Document Events
 # ---------------

@@ -829,7 +829,7 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 
 // --- Bind to Patient Encounter ---
 frappe.ui.form.on('Patient Encounter', {
-	onload(frm) {
+	onload_post_render(frm) {
 		function refreshBannerAndFields(patientCtx) {
 			if (!patientCtx) return;
 

@@ -23,19 +23,21 @@ def patient_appointment_inserting(doc, method=None):
         # frappe.db.set_value("Patient Appointment", doc.appointment, "custom_visit_status", "Arrived")
 
 def patient_appointment_update(doc, method=None):
-    if doc.has_value_changed('custom_visit_status'):
-        old_value = doc.get_doc_before_save().custom_visit_status if doc.get_doc_before_save() else None
-        
-        frappe.publish_realtime(
-            event="do_health_waiting_list_update",
-            message={
-                "doctype": "Patient Appointment",
-                "name": doc.name,
-                "custom_visit_status": doc.custom_visit_status,
-                "old_status": old_value
-            },
-            after_commit=True
-        )
+    if not doc.has_value_changed("custom_visit_status"):
+        return
+
+    old_value = doc.get_doc_before_save().custom_visit_status if doc.get_doc_before_save() else None
+
+    frappe.publish_realtime(
+        event="do_health_waiting_list_update",
+        message={
+            "name": doc.name,
+            "patient": doc.patient,
+            "new_status": doc.custom_visit_status,
+            "old_status": old_value,
+        },
+        after_commit=True
+    )
 
 def patient_encounter_inserted(doc, method=None):
     if doc.appointment:

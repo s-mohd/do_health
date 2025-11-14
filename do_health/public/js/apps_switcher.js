@@ -1,33 +1,22 @@
 frappe.after_ajax(() => {
-    let manual_switch = false;
-
-    // Intercept clicks on the app switcher menu
-    $(document).on("click", ".app-switcher-menu .app-item", () => {
-        manual_switch = true;
-    });
-
-    const orig_set_current_app = frappe.ui.AppsSwitcher.prototype.set_current_app;
-
     frappe.ui.AppsSwitcher.prototype.set_current_app = function (app) {
-        const saved = localStorage.getItem("last_chosen_app") || "do_health";
 
-        if (manual_switch) {
-            // user explicitly clicked another app
-            localStorage.setItem("last_chosen_app", app);
-            
-            // Refresh page when navigating to do_health to avoid bugs and lags
-            if (app === "do_health") {
-                window.location.reload();
-                return;
+        const saved = localStorage.getItem("do_health_sidebar_mode");
+        // Switch sidebar and refresh page
+        if (app === "do_health") {
+            if (saved !== 'health') {
+                localStorage.setItem("do_health_sidebar_mode", 'health');
+                document.body.classList.add("do-health-sidebar-active");
+                // window.location.reload();
             }
-            
-            manual_switch = false; // reset flag
-        } else {
-            // auto-switch (route change etc.) → ignore and stick to saved app
-            app = saved;
+            return;
         }
 
-        const app_data = frappe.boot.app_data_map[app] || frappe.boot.app_data_map["frappe"];
+        if (!app) {
+            console.warn("set_current_app: app not defined");
+            return;
+        }
+        let app_data = frappe.boot.app_data_map[app] || frappe.boot.app_data_map["frappe"];
 
         this.sidebar_wrapper
             .find(".app-switcher-dropdown .sidebar-item-icon img")
@@ -38,19 +27,10 @@ frappe.after_ajax(() => {
 
         frappe.frappe_toolbar.set_app_logo(app_data.app_logo_url);
 
+        if (frappe.current_app === app) return;
         frappe.current_app = app;
 
+        // re-render the sidebar
         frappe.app.sidebar.make_sidebar();
-    };
-
-    // Also patch set_default_app so reload respects saved
-    frappe.ui.Sidebar.prototype.set_default_app = function () {
-        const saved = localStorage.getItem("last_chosen_app") || "do_health";
-        if (frappe.boot.app_data_map?.[saved]) {
-            frappe.current_app = saved;
-            frappe.frappe_toolbar.set_app_logo(frappe.boot.app_data_map[saved].app_logo_url);
-        } else {
-            frappe.current_app = "do_health"; // fallback
-        }
     };
 });

@@ -1690,9 +1690,15 @@ def get_waiting_list():
 	return frappe.db.sql("""
 		SELECT 
 			pa.name,
+			pa.appointment_type,
 			pa.patient_name,
 			pa.patient,
+			p.mobile,
+			p.dob,
+			p.custom_cpr,
+			p.custom_file_number,
 			p.image AS patient_image,
+			p.sex AS gender,
 			pa.practitioner,
 			pa.practitioner_name,
 			pa.custom_visit_status,
@@ -1710,7 +1716,7 @@ def get_waiting_list():
 			ON pa.patient = p.name
 		WHERE pa.custom_visit_status = 'Arrived' 
 		AND pa.appointment_date = CURDATE()
-		ORDER BY pa.practitioner_name, at.arrival_time DESC
+		ORDER BY pa.practitioner_name, at.arrival_time ASC
 		LIMIT 5;
 
 	""", as_dict=True)

@@ -1,1050 +1,970 @@
 (() => {
-    const ACTIVE_PATIENT_STORAGE_KEY = "do_health_active_patient";
-    const WAITING_SECTION_ID = "do-health-sidebar-waiting";
-    const WAITING_SECTION_SELECTOR = `.sidebar-item-container[item-name='Waiting'], #${WAITING_SECTION_ID}`;
-    const SELECTED_SECTION_ID = "do-health-selected-patient";
-    const SELECTED_SECTION_SELECTOR = `#${SELECTED_SECTION_ID}`;
-    const ENCOUNTER_SELECTOR = `.sidebar-item-container[item-name='Encounter']`;
-    const DOCUMENTS_SELECTOR = `.sidebar-item-container[item-name='Documents']`;
-    const CHART_SELECTOR = `.sidebar-item-container[item-name='Patient Chart']`;
-    const APPOINTMENTS_SELECTOR = `.sidebar-item-container[item-name='Appointments']`;
-    const DEFAULT_PATIENT_AVATAR = null; // Will use icon fallback instead
-    const TIMER_UPDATE_DELAY = 10000; // Update timers every 10 seconds
-    const AUTO_REFRESH_INTERVAL = 60000;
-    const SIDEBAR_REBUILD_DELAY = 300;
+    const SIDEBAR_CONFIG = frappe.boot?.health_sidebar_config || {
+        primary_nav: [],
+        patient_actions: []
+    };
 
-    let lastWaitingPatients = [];
-    let initialized = false;
-    let refreshTimerId = null;
-    let realtimeHandlerRegistered = false;
+    const STORAGE_KEYS = {
+        patient: "do_health_active_patient",
+        mode: "do_health_sidebar_mode",
+        secondary: "do_health_secondary_collapsed"
+    };
+
+    const SELECTORS = {
+        shell: "#do-health-sidebar",
+        nav: "#do-health-primary-nav",
+        selected: "#do-health-selected",
+        waitingList: "#do-health-waiting-list",
+        waitingCount: "#do-health-waiting-count",
+        restoreButton: ".do-health-sidebar__restore",
+        secondary: "#do-health-secondary",
+        secondaryToggle: "[data-secondary-toggle]",
+        refreshWaiting: "[data-refresh-waiting]",
+        brandBadge: ".do-health-sidebar__brand-badge"
+    };
+
+    const state = {
+        waiting: [],
+        mode: loadSidebarMode(),
+        selectedPatient: null,
+        initialized: false,
+        realtimeRegistered: false,
+        secondaryCollapsed: loadSecondaryCollapsed()
+    };
 
     const translate = (...args) => (typeof __ === "function" ? __(...args) : args[0]);
+
     const isValidDate = (value) => value && !Number.isNaN(new Date(value).getTime());
 
-    function getStatusColor(status) {
-        const statusColors = {
-            'Arrived': '#17a2b8',      // cyan
-            'In Room': '#28a745',       // green
-            'Completed': '#6c757d',     // gray
-            'Checked Out': '#6c757d',   // gray
-            'Cancelled': '#dc3545',     // red
-            'No Show': '#ffc107'        // yellow
-        };
-        return statusColors[status] || '#6c757d';
+    let appSwitcherListenerRegistered = false;
+
+    function loadSidebarMode() {
+        return localStorage.getItem(STORAGE_KEYS.mode) || "health";
     }
 
-    function getSidebarWrapper() {
-        return $(".sidebar-items .standard-sidebar-section");
+    function saveSidebarMode(mode) {
+        state.mode = mode;
+        localStorage.setItem(STORAGE_KEYS.mode, mode);
+        applySidebarMode(mode);
     }
 
-    function iconMarkup(name, size = "md") {
-        if (frappe?.utils?.icon) {
-            return frappe.utils.icon(name, size);
+    function loadSecondaryCollapsed() {
+        return localStorage.getItem(STORAGE_KEYS.secondary) === "1";
+    }
+
+    function saveSecondaryCollapsed(collapsed) {
+        localStorage.setItem(STORAGE_KEYS.secondary, collapsed ? "1" : "0");
+    }
+
+    function applySidebarMode(mode) {
+        if (mode === "health") {
+            document.body.classList.add("do-health-sidebar-active");
+        } else {
+            document.body.classList.remove("do-health-sidebar-active");
         }
-        const symbolId = name.startsWith("es-") ? name : `icon-${name}`;
-        return `<svg class="icon icon-${size}"><use href="#${symbolId}"></use></svg>`;
     }
 
-    function formatMinutesSince(arrivalTime) {
-        if (!isValidDate(arrivalTime)) return "";
-        const now = Date.now();
-        const arrival = new Date(arrivalTime).getTime();
-        const diffMinutes = Math.max(Math.floor((now - arrival) / 60000), 0);
-        return diffMinutes >= 60
-            ? `${Math.floor(diffMinutes / 60)}h ${diffMinutes % 60}m`
-            : `${diffMinutes}m`;
+    function applySecondaryCollapsed(collapsed) {
+        const $shell = $(SELECTORS.shell);
+        if (!$shell.length) return;
+        $shell.attr("data-secondary-collapsed", collapsed ? "true" : "false");
+
+        const $toggle = $(SELECTORS.secondaryToggle);
+        if ($toggle.length) {
+            $toggle
+                .attr(
+                    "aria-label",
+                    collapsed ? translate("Show Patient Panel") : translate("Hide Patient Panel")
+                )
+                .toggleClass("is-collapsed", collapsed);
+        }
     }
 
     function normalizePatient(patient = {}) {
         const patientId = patient.patient || patient.name;
         if (!patientId) return null;
+
         return {
             patient: patientId,
-            patient_name: patient.patient_name || patient.full_name || patientId,
-            appointment: patient.appointment || patient.name || null,
-            arrival_time: patient.arrival_time || null,
-            patient_image: patient.patient_image || null,
-            custom_visit_status: patient.custom_visit_status || null
+            patient_name: patient.patient_name || patientId,
+            appointment: patient.name || null,
+            ...patient
         };
     }
 
     function getSavedPatientContext() {
         try {
-            const raw = localStorage.getItem(ACTIVE_PATIENT_STORAGE_KEY);
+            const raw = localStorage.getItem(STORAGE_KEYS.patient);
             if (!raw) return null;
             return normalizePatient(JSON.parse(raw));
-        } catch {
+        } catch (error) {
+            console.warn("[do_health] Failed to parse patient context", error);
             return null;
         }
     }
 
     function savePatientContext(patient) {
         if (!patient) return;
-        localStorage.setItem(ACTIVE_PATIENT_STORAGE_KEY, JSON.stringify(patient));
-
-        window.dispatchEvent(new StorageEvent("storage", { key: "do_health_active_patient" }));
+        localStorage.setItem(STORAGE_KEYS.patient, JSON.stringify(patient));
+        window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEYS.patient }));
     }
-
-    let lastBannerCreatedAt = 0;
-    const BANNER_CREATE_COOLDOWN = 800;
 
     function clearPatientContext() {
-        localStorage.removeItem(ACTIVE_PATIENT_STORAGE_KEY);
-        $(".active-waiting-patient").removeClass("active-waiting-patient");
-        disableSidebarActions();
+        localStorage.removeItem(STORAGE_KEYS.patient);
+        state.selectedPatient = null;
+        $(".do-health-waiting-item.active").removeClass("active");
+        renderSelectedPatient(null);
     }
 
-    // --- Patient Info Banner
-    function createPatientInfoBanner(patient) {
-        const now = Date.now();
-
-        // Prevent duplicate or rapid re-render
-        if (now - lastBannerCreatedAt < BANNER_CREATE_COOLDOWN) {
-            console.log("Skipped duplicate banner render");
-            return;
+    function formatMinutesSince(arrivalTime) {
+        if (!isValidDate(arrivalTime)) return "";
+        const arrival = new Date(arrivalTime).getTime();
+        const diffMinutes = Math.max(Math.floor((Date.now() - arrival) / 60000), 0);
+        if (diffMinutes < 1) return "<1m";
+        if (diffMinutes >= 60) {
+            const hours = Math.floor(diffMinutes / 60);
+            const mins = diffMinutes % 60;
+            return `${hours}h ${mins}m`;
         }
-        lastBannerCreatedAt = now;
-
-        // Remove any previous banner before creating a new one
-        $(".do-health-patient-banner").remove();
-
-        if (!patient || !patient.patient || !patient.appointment) return;
-
-        // Continue as before...
-        frappe.db.get_doc("Patient", patient.patient).then(patientData => {
-            Promise.all([
-                frappe.db.get_doc("Patient Appointment", patient.appointment),
-                frappe.db.get_list("Patient Encounter", {
-                    filters: { patient: patient.patient, docstatus: 1 },
-                    fields: ["encounter_date"],
-                    order_by: "encounter_date desc",
-                    limit: 1
-                }),
-                frappe.db.get_list("Vital Signs", {
-                    filters: { appointment: patient.appointment, docstatus: ['<', 2] },
-                    fields: ["name", "temperature", "pulse", "bp_systolic", "bp_diastolic", "weight"],
-                    order_by: "creation desc",
-                    limit: 1
-                })
-            ]).then(([appointmentData, lastVisits, vitalSigns]) => {
-                const vitals = vitalSigns.length > 0 ? vitalSigns[0] : {
-                    temperature: appointmentData.custom_temperature,
-                    pulse: appointmentData.custom_pulse,
-                    bp_systolic: appointmentData.custom_bp_systolic,
-                    bp_diastolic: appointmentData.custom_bp_diastolic,
-                    weight: appointmentData.custom_weight
-                };
-                renderBanner(patientData, appointmentData, lastVisits[0]?.encounter_date, vitals);
-            });
-        });
+        return `${diffMinutes}m`;
     }
 
-
-    function renderBanner(patient, appointment, lastVisit, vitals) {
-        const age = patient.dob ? Math.floor((Date.now() - new Date(patient.dob)) / 31557600000) : "";
-
-        // Calculate top position: navbar + page-head
-        const navbarHeight = $(".navbar").outerHeight() || 0;
-        const pageHeadHeight = $(".page-head").outerHeight() || 0;
-        const topPosition = navbarHeight + pageHeadHeight;
-
-        const $banner = $("<div>", {
-            class: "do-health-patient-banner",
-            style: `background: linear-gradient(to right, #ffffff 0%, #f8f9fa 100%); border-bottom: 2px solid #e3e8ef; padding: 16px 28px; position: sticky; top: ${topPosition}px; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 0; width: 100%;`
-        });
-
-        const $row = $("<div>", {
-            style: "display: flex; align-items: center; gap: 20px;"
-        });
-
-        // Avatar with gradient border
-        const initial = patient.patient_name?.charAt(0).toUpperCase() || "?";
-        const $avatarWrapper = $("<div>", {
-            style: "position: relative; flex-shrink: 0;"
-        });
-
-        const $avatar = patient.image
-            ? $("<img>", {
-                src: patient.image,
-                style: "width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 2px 12px rgba(102, 126, 234, 0.3);"
-            })
-            : $("<div>", {
-                style: "width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 22px; font-weight: 700; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); border: 3px solid #fff;",
-                text: initial
-            });
-
-        $avatarWrapper.append($avatar);
-
-        // Patient info section with enhanced typography
-        const $info = $("<div>", { style: "flex: 1; min-width: 200px;" });
-
-        const $nameWrapper = $("<div>", {
-            style: "display: flex; align-items: center; gap: 8px; margin-bottom: 6px;"
-        });
-
-        const $name = $("<span>", {
-            style: "font-size: 19px; font-weight: 700; color: #2c3e50; letter-spacing: -0.3px;",
-            text: patient.patient_name
-        });
-
-        $nameWrapper.append($name);
-
-        if (patient.sex) {
-            const genderColor = patient.sex === "Male" ? "#3498db" : patient.sex === "Female" ? "#e91e63" : "#95a5a6";
-            const $genderBadge = $("<span>", {
-                style: `background: ${genderColor}; color: white; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.5px;`,
-                text: patient.sex
-            });
-            $nameWrapper.append($genderBadge);
+    function iconMarkup(name, size = "md") {
+        if (frappe?.utils?.icon) {
+            return frappe.utils.icon(name, size);
         }
+        const symbolId = name?.startsWith("es-") ? name : `icon-${name || "circle"}`;
+        return `<svg class="icon icon-${size}"><use href="#${symbolId}"></use></svg>`;
+    }
 
-        const details = [];
-        if (patient.custom_cpr || patient.name) {
-            details.push(`<span style="font-weight: 600; color: #495057;">CPR:</span> <span style="color: #6c757d;">${patient.custom_cpr || patient.name}</span>`);
-        }
-        if (patient.dob) {
-            details.push(`<span style="font-weight: 600; color: #495057;">DOB:</span> <span style="color: #6c757d;">${frappe.datetime.str_to_user(patient.dob)} (${age}y)</span>`);
-        }
+    let sidebarMountAttempts = 0;
+    const MAX_SIDEBAR_MOUNT_ATTEMPTS = 40;
 
-        const $details = $("<div>", {
-            style: "font-size: 13px; line-height: 1.6;",
-            html: details.join(" <span style='color: #dee2e6; margin: 0 6px;'>|</span> ")
-        });
-
-        // Add last visit as clickable element
-        if (lastVisit) {
-            if (details.length > 0) {
-                $details.append($("<span>", {
-                    style: "color: #dee2e6; margin: 0 6px;",
-                    text: "|"
-                }));
+    function getBrandLogoMarkup() {
+        frappe.db.get_single_value('Global Defaults', 'default_company').then(default_company => {
+            if (default_company) {
+                frappe.db.get_value("Company", default_company, ['abbr', 'company_logo']).then(r => {
+                    if (r.message.company_logo) {
+                        $('.do-health-sidebar__brand-badge').html(`<img src="${r.message.company_logo}" alt="Do Health" />`);
+                        return `<img src="${r.message.company_logo}" alt="Do Health" />`;
+                    }
+                    $('.do-health-sidebar__brand-badge').html(`<span>${r.message.abbr}</span>`);
+                    return `<span>${r.message.abbr}</span>`;
+                });
             }
+            $('.do-health-sidebar__brand-badge').html(`<span>DH</span>`);
+            return `<span>DH</span>`;
+        });
+    }
 
-            const $lastVisitLabel = $("<span>", {
-                style: "font-weight: 600; color: #495057;",
-                text: "Last Visit: "
-            });
+    function mountSidebarShell() {
+        const $bodyContainer = $(".body-container").length
+            ? $(".body-container")
+            : $("body");
 
-            const $lastVisitValue = $("<span>", {
-                style: "color: #6c757d; cursor: pointer; text-decoration: underline; text-decoration-style: dotted;",
-                text: frappe.datetime.str_to_user(lastVisit)
-            });
-
-            $lastVisitValue.on("click", function (e) {
-                e.stopPropagation();
-
-                // Find the encounter with this date
-                frappe.call({
-                    method: "frappe.client.get_list",
-                    args: {
-                        doctype: "Patient Encounter",
-                        filters: {
-                            patient: patient.name,
-                            encounter_date: lastVisit,
-                            docstatus: 1
-                        },
-                        fields: ["name"],
-                        order_by: "creation desc",
-                        limit: 1
-                    },
-                    callback: function (r) {
-                        if (r.message && r.message.length > 0) {
-                            const encounterName = r.message[0].name;
-
-                            // Open encounter in a dialog
-                            frappe.call({
-                                method: "frappe.client.get",
-                                args: {
-                                    doctype: "Patient Encounter",
-                                    name: encounterName
-                                },
-                                callback: function (encounterData) {
-                                    if (encounterData.message) {
-                                        const encounter = encounterData.message;
-
-                                        // Create dialog to show encounter details
-                                        const dialog = new frappe.ui.Dialog({
-                                            title: `Encounter: ${encounter.name}`,
-                                            size: 'large',
-                                            fields: [
-                                                {
-                                                    fieldtype: 'HTML',
-                                                    fieldname: 'encounter_details'
-                                                }
-                                            ]
-                                        });
-
-                                        // Build encounter details HTML
-                                        let html = `
-                                            <div style="padding: 16px;">
-                                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-                                                    <div>
-                                                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">Encounter Date</div>
-                                                        <div style="font-size: 14px; font-weight: 600;">${frappe.datetime.str_to_user(encounter.encounter_date)}</div>
-                                                    </div>
-                                                    <div>
-                                                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">Practitioner</div>
-                                                        <div style="font-size: 14px; font-weight: 600;">${encounter.practitioner_name || encounter.practitioner || 'N/A'}</div>
-                                                    </div>
-                                                </div>
-                                        `;
-
-                                        // Add symptoms if available
-                                        if (encounter.symptoms) {
-                                            html += `
-                                                <div style="margin-bottom: 20px;">
-                                                    <div style="font-size: 12px; color: #495057; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #e3e8ef;">Symptoms</div>
-                                                    <div style="font-size: 13px; color: #6c757d; white-space: pre-wrap;">${encounter.symptoms}</div>
-                                                </div>
-                                            `;
-                                        }
-
-                                        // Add diagnosis if available
-                                        if (encounter.diagnosis) {
-                                            html += `
-                                                <div style="margin-bottom: 20px;">
-                                                    <div style="font-size: 12px; color: #495057; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #e3e8ef;">Diagnosis</div>
-                                                    <div style="font-size: 13px; color: #6c757d; white-space: pre-wrap;">${encounter.diagnosis}</div>
-                                                </div>
-                                            `;
-                                        }
-
-                                        // Add notes if available
-                                        if (encounter.encounter_comment) {
-                                            html += `
-                                                <div style="margin-bottom: 20px;">
-                                                    <div style="font-size: 12px; color: #495057; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #e3e8ef;">Notes</div>
-                                                    <div style="font-size: 13px; color: #6c757d; white-space: pre-wrap;">${encounter.encounter_comment}</div>
-                                                </div>
-                                            `;
-                                        }
-
-                                        // Add button to open full encounter
-                                        html += `
-                                                <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e3e8ef;">
-                                                    <button class="btn btn-primary btn-sm" onclick="frappe.set_route('Form', 'Patient Encounter', '${encounter.name}'); cur_dialog.hide();">
-                                                        <i class="fa fa-external-link-alt"></i> Open Full Encounter
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        `;
-
-                                        dialog.fields_dict.encounter_details.$wrapper.html(html);
-                                        dialog.show();
-                                    }
-                                }
-                            });
-                        } else {
-                            frappe.msgprint(__('Encounter not found'));
-                        }
-                    }
-                });
-            });
-
-            $details.append($lastVisitLabel, $lastVisitValue);
-        }
-
-        $info.append($nameWrapper, $details);
-
-        // Vitals section with cards
-        const vitalsList = [];
-        if (vitals.temperature) {
-            vitalsList.push({ icon: "fa-thermometer-half", label: "Temp", value: `${vitals.temperature}°C`, color: "#ff6b6b", bg: "#ffe5e5" });
-        }
-        if (vitals.pulse) {
-            vitalsList.push({ icon: "fa-heartbeat", label: "Pulse", value: `${vitals.pulse}`, unit: "bpm", color: "#ee5a6f", bg: "#ffe5eb" });
-        }
-        if (vitals.bp_systolic && vitals.bp_diastolic) {
-            vitalsList.push({ icon: "fa-stethoscope", label: "BP", value: `${vitals.bp_systolic}/${vitals.bp_diastolic}`, color: "#4ecdc4", bg: "#e0f7f6" });
-        }
-        if (vitals.weight) {
-            vitalsList.push({ icon: "fa-weight", label: "Weight", value: `${vitals.weight}`, unit: "kg", color: "#95e1d3", bg: "#e8f8f5" });
-        }
-
-        let $vitals = null;
-
-        if (vitalsList.length > 0) {
-            $vitals = $("<div>", {
-                style: "display: flex; gap: 12px; padding-left: 20px; margin-left: 20px; border-left: 2px solid #e3e8ef;"
-            });
-
-            vitalsList.forEach(v => {
-                const $card = $("<div>", {
-                    style: `background: ${v.bg}; padding: 10px 14px; border-radius: 10px; text-align: center; min-width: 75px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid ${v.color}20;`
-                });
-
-                $card.append(
-                    $("<div>", {
-                        style: `color: ${v.color}; font-size: 16px; margin-bottom: 4px;`,
-                        html: `<i class="fa ${v.icon}"></i>`
-                    }),
-                    $("<div>", {
-                        style: "font-size: 9px; color: #6c757d; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px;",
-                        text: v.label
-                    }),
-                    $("<div>", {
-                        style: `font-size: 15px; font-weight: 800; color: ${v.color};`,
-                        html: v.value + (v.unit ? `<span style="font-size: 10px; font-weight: 600; margin-left: 2px;">${v.unit}</span>` : "")
-                    })
-                );
-
-                $vitals.append($card);
-            });
-        } else {
-            // No vitals available - show button to enter them
-            $vitals = $("<div>", {
-                style: "display: flex; align-items: center; padding-left: 20px; margin-left: 20px; border-left: 2px solid #e3e8ef;"
-            });
-
-            const $addVitalsBtn = $("<button>", {
-                class: "btn btn-sm",
-                style: "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);",
-                html: '<i class="fa fa-plus-circle"></i> Vital Signs'
-            });
-
-            $addVitalsBtn.on("click", function () {
-                // Open dialog to enter vitals
-                const dialog = new frappe.ui.Dialog({
-                    title: 'Vital Signs',
-                    fields: [
-                        {
-                            label: 'Temperature (°C)',
-                            fieldname: 'custom_temperature',
-                            fieldtype: 'Float'
-                        },
-                        {
-                            label: 'Pulse (bpm)',
-                            fieldname: 'custom_pulse',
-                            fieldtype: 'Int'
-                        },
-                        {
-                            label: 'BP Systolic',
-                            fieldname: 'custom_bp_systolic',
-                            fieldtype: 'Int'
-                        },
-                        {
-                            label: 'BP Diastolic',
-                            fieldname: 'custom_bp_diastolic',
-                            fieldtype: 'Int'
-                        },
-                        {
-                            label: 'Weight (kg)',
-                            fieldname: 'custom_weight',
-                            fieldtype: 'Float'
-                        }
-                    ],
-                    primary_action_label: 'Save',
-                    primary_action(values) {
-                        // First check if Vital Signs already exist for this appointment (draft or submitted, not cancelled)
-                        frappe.call({
-                            method: 'frappe.client.get_list',
-                            args: {
-                                doctype: 'Vital Signs',
-                                filters: {
-                                    appointment: appointment.name,
-                                    docstatus: ['<', 2]  // 0 = draft, 1 = submitted, 2 = cancelled
-                                },
-                                fields: ['name'],
-                                limit: 1
-                            },
-                            callback: function (existingCheck) {
-                                if (existingCheck.message && existingCheck.message.length > 0) {
-                                    // Update existing Vital Signs
-                                    const vitalSignsName = existingCheck.message[0].name;
-                                    frappe.call({
-                                        method: 'frappe.client.set_value',
-                                        args: {
-                                            doctype: 'Vital Signs',
-                                            name: vitalSignsName,
-                                            fieldname: {
-                                                temperature: values.custom_temperature,
-                                                pulse: values.custom_pulse,
-                                                bp_systolic: values.custom_bp_systolic,
-                                                bp_diastolic: values.custom_bp_diastolic,
-                                                weight: values.custom_weight
-                                            }
-                                        },
-                                        callback: function (r) {
-                                            if (!r.exc) {
-                                                updateAppointmentAndRefresh(values, dialog);
-                                            }
-                                        }
-                                    });
-                                } else {
-                                    // Create new Vital Signs document
-                                    const vitalSignsDoc = {
-                                        doctype: 'Vital Signs',
-                                        patient: appointment.patient,
-                                        patient_name: appointment.patient_name,
-                                        appointment: appointment.name,
-                                        signs_date: frappe.datetime.nowdate(),
-                                        signs_time: frappe.datetime.now_time(),
-                                        temperature: values.custom_temperature,
-                                        pulse: values.custom_pulse,
-                                        bp_systolic: values.custom_bp_systolic,
-                                        bp_diastolic: values.custom_bp_diastolic,
-                                        weight: values.custom_weight
-                                    };
-
-                                    frappe.call({
-                                        method: 'frappe.client.insert',
-                                        args: {
-                                            doc: vitalSignsDoc
-                                        },
-                                        callback: function (r) {
-                                            if (!r.exc) {
-                                                updateAppointmentAndRefresh(values, dialog);
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                        });
-
-                        function updateAppointmentAndRefresh(values, dialog) {
-                            // Update appointment with vitals
-                            frappe.call({
-                                method: 'frappe.client.set_value',
-                                args: {
-                                    doctype: 'Patient Appointment',
-                                    name: appointment.name,
-                                    fieldname: {
-                                        custom_temperature: values.custom_temperature,
-                                        custom_pulse: values.custom_pulse,
-                                        custom_bp_systolic: values.custom_bp_systolic,
-                                        custom_bp_diastolic: values.custom_bp_diastolic,
-                                        custom_weight: values.custom_weight
-                                    }
-                                },
-                                callback: function () {
-                                    frappe.show_alert({
-                                        message: __('Vital Signs saved successfully'),
-                                        indicator: 'green'
-                                    });
-                                    dialog.hide();
-                                    // Refresh banner
-                                    const saved = getSavedPatientContext();
-                                    if (saved) {
-                                        $(".do-health-patient-banner").remove();
-                                        createPatientInfoBanner(saved);
-                                    }
-                                }
-                            });
-                        }
-                    }
-                });
-
-                dialog.show();
-            });
-
-            $vitals.append($addVitalsBtn);
-        }
-
-        // Insurance badge with premium design
-        let $insurance = null;
-        if (appointment.insurance_company || appointment.insurance) {
-            $insurance = $("<div>", {
-                style: "padding: 10px 18px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3); margin-left: 12px;",
-                html: `<i class="fa fa-shield-alt" style="color: #fff; font-size: 16px;"></i><div style="color: #fff;"><div style="font-size: 9px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; opacity: 0.9;">Insurance</div><div style="font-size: 13px; font-weight: 700;">${appointment.insurance_company || appointment.insurance}</div></div>`
-            });
-        }
-
-        // Assemble
-        $row.append($avatarWrapper, $info);
-        if ($vitals) $row.append($vitals);
-        if ($insurance) $row.append($insurance);
-
-        $banner.append($row);
-
-        // Insert right below page-head (breadcrumb area) without gap
-        const $pageHead = $(".page-head");
-        if ($pageHead.length) {
-            $pageHead.after($banner);
-        } else {
-            const $layoutMain = $(".layout-main-section");
-            if ($layoutMain.length) {
-                $layoutMain.prepend($banner);
+        if (!$bodyContainer.length) {
+            if (sidebarMountAttempts < MAX_SIDEBAR_MOUNT_ATTEMPTS) {
+                sidebarMountAttempts += 1;
+                setTimeout(mountSidebarShell, 200);
             } else {
-                $(".page-container").prepend($banner);
+                console.warn("[do_health] Unable to locate .body-container for custom shell.");
             }
+            return false;
         }
 
-        // Adjust form elements to account for sticky banner
-        const bannerHeight = $banner.outerHeight() || 0;
-        const stickyOffset = navbarHeight + pageHeadHeight + bannerHeight;
+        if ($(SELECTORS.shell).length) {
+            return true;
+        }
 
-        // Fix form-message and form-tabs-list sticky positioning
-        setTimeout(() => {
-            const $formMessage = $(".form-message");
-            const $formTabsList = $(".form-tabs-list");
+        const sidebar = $(`
+            <div id="do-health-sidebar" data-secondary-collapsed="false">
+                <div class="do-health-primary-rail">
+                    <button class="do-health-sidebar__brand-badge" type="button"></button>
+                    <div class="do-health-primary-nav" id="do-health-primary-nav"></div>
+                </div>
+                <div class="do-health-secondary-wrapper">
+                    <div class="do-health-sidebar__secondary" id="do-health-secondary">
+                        <div class="do-health-selected" id="do-health-selected"></div>
+                        <div class="do-health-secondary__section do-health-secondary__waiting">
+                            <div class="do-health-section__header">
+                                <span>${translate("Waiting List")}</span>
+                                <div class="do-health-section__actions">
+                                    <div class="do-health-chip do-health-chip--time" id="do-health-waiting-count">0</div>
+                                    <button class="do-health-section__refresh" type="button" data-refresh-waiting>
+                                        ${translate("Refresh")}
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="do-health-scroll do-health-waiting__scroll">
+                                <div class="do-health-waiting__list" id="do-health-waiting-list"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="do-health-secondary-toggle" type="button" data-secondary-toggle aria-label="${translate(
+            "Hide Patient Panel"
+        )}">
+                        <span class="chevron"></span>
+                    </button>
+                </div>
+            </div>
+        `);
 
-            if ($formMessage.length && $formMessage.css("position") === "sticky") {
-                $formMessage.css("top", `${stickyOffset}px`);
-            }
+        getBrandLogoMarkup();
 
-            if ($formTabsList.length && $formTabsList.css("position") === "sticky") {
-                $formTabsList.css("top", `${stickyOffset}px`);
-            }
-        }, 50);
+        const restoreButton = $(`
+            <button type="button" class="btn btn-sm btn-default do-health-sidebar__restore">
+                ${translate("Health Sidebar")}
+            </button>
+        `);
 
-        // Hide form's patient info only (keep page title)
-        setTimeout(() => {
-            $(".form-patient-info, .patient-details-section").hide();
-        }, 100);
-    }
-
-    // --- Encounter workspace control
-    function disableSidebarActions() {
-        const $enc = $(ENCOUNTER_SELECTOR).find(".item-anchor");
-        if (!$enc.length) return;
-        $enc.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
-        $enc.css({
-            "color": "",
-            "background": "",
-            "border-left": "",
-            "font-weight": "",
-            "box-shadow": ""
+        sidebar.find(SELECTORS.refreshWaiting).on("click", () => fetchWaitingPatients());
+        sidebar.find(SELECTORS.secondaryToggle).on("click", () => {
+            state.secondaryCollapsed = !state.secondaryCollapsed;
+            saveSecondaryCollapsed(state.secondaryCollapsed);
+            applySecondaryCollapsed(state.secondaryCollapsed);
         });
-        // Remove any status indicator
-        $enc.find(".encounter-status-indicator").remove();
+        sidebar.find(SELECTORS.brandBadge).on("click", (event) => {
+            event.preventDefault();
+            openAppSwitcher();
+        });
 
-        const $doc = $(DOCUMENTS_SELECTOR).find(".item-anchor");
-        if (!$doc.length) return;
-        $doc.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
-
-        const $chart = $(CHART_SELECTOR).find(".item-anchor");
-        if (!$chart.length) return;
-        $chart.addClass("hidden").attr("href", "#").attr("title", translate("Select a patient first"));
-
+        $bodyContainer.prepend(sidebar);
+        $("body").append(restoreButton);
+        applySecondaryCollapsed(state.secondaryCollapsed);
+        return true;
     }
 
-    async function enableSidebarActions(patient) {
-        const $enc = $(ENCOUNTER_SELECTOR).find(".item-anchor");
-        const $doc = $(DOCUMENTS_SELECTOR).find(".item-anchor");
-        const $chart = $(CHART_SELECTOR).find(".item-anchor");
-        if (!$enc.length) return;
+    function openAppSwitcher() {
+        const $badge = $(SELECTORS.brandBadge);
+        if (!$badge.length) return;
 
-        // Remove any existing status indicator
-        $enc.find(".encounter-status-indicator").remove();
+        const $nativeToggle =
+            $(".app-switcher-dropdown .drop-icon button, .app-switcher-dropdown .drop-icon").first() ||
+            $(".navbar .app-switcher button, .navbar .app-logo").first();
 
-        // Check if an encounter exists for this appointment
-        if (patient.appointment) {
-            try {
-                const result = await frappe.call({
-                    method: "frappe.client.get_list",
-                    args: {
-                        doctype: "Patient Encounter",
-                        filters: {
-                            appointment: patient.appointment
-                        },
-                        fields: ["name", "docstatus"],
-                        limit: 1
+        const closeOverlay = () => {
+            $("#do-health-appswitcher-overlay").fadeOut(150, function () {
+                $(this).remove();
+            });
+            $("#do-health-appswitcher-clone").fadeOut(150, function () {
+                $(this).remove();
+            });
+        };
+
+        const positionClone = ($clone) => {
+            const badgeOffset = $badge.offset();
+            const badgeHeight = $badge.outerHeight();
+            const dropdownWidth = $clone.outerWidth();
+            const viewportWidth = $(window).width();
+
+            const left = Math.min(
+                Math.max(12, (badgeOffset?.left || 0) - dropdownWidth / 2 + $badge.outerWidth() / 2),
+                viewportWidth - dropdownWidth - 12
+            );
+
+            $clone.css({
+                position: "absolute",
+                top: (badgeOffset?.top || 0) + badgeHeight + 8,
+                left,
+                zIndex: 1051,
+                borderRadius: "12px",
+                boxShadow: "0 4px 24px rgba(0,0,0,0.35)",
+                backdropFilter: "blur(10px)",
+            });
+        };
+
+        const attachOverlay = () => {
+            if ($("#do-health-appswitcher-overlay").length) return;
+            $("<div>", {
+                id: "do-health-appswitcher-overlay",
+                css: {
+                    position: "fixed",
+                    inset: 0,
+                    zIndex: 1050,
+                    background: "rgba(0,0,0,0.35)",
+                    backdropFilter: "blur(4px)",
+                },
+            })
+                .appendTo("body")
+                .on("click", closeOverlay)
+                .hide()
+                .fadeIn(120);
+        };
+
+        const wireLinks = ($menu) => {
+            $menu.find("a").each((_, link) => {
+                $(link).on("click", function () {
+                    const label = ($(this).text() || "").toLowerCase();
+                    const currentMode = localStorage.getItem("do_health_sidebar_mode");
+                    if (label.trim() !== "do health" && currentMode === "health") {
+                        saveSidebarMode("standard");
                     }
+                    closeOverlay();
+                });
+            });
+        };
+
+        const attemptClone = () => {
+            let $menu = $(".app-switcher-menu").first();
+            const menuHidden = !$menu.is(":visible");
+
+            if (!$menu.length && $nativeToggle.length) {
+                $nativeToggle.trigger("click");
+                $menu = $(".app-switcher-menu").first();
+            }
+            if (!$menu.length) return false;
+
+            if (menuHidden && $nativeToggle.length) $nativeToggle.trigger("click");
+
+            const $clone = $menu.clone(true, true).attr("id", "do-health-appswitcher-clone");
+            $clone.css({
+                background: "rgba(15,23,42,0.95)",
+                border: "1px solid rgba(255,255,255,0.08)",
+            });
+
+            $("body").append($clone);
+            positionClone($clone);
+            wireLinks($clone);
+            attachOverlay();
+
+            $clone.hide().fadeIn(120);
+            return true;
+        };
+
+        if (attemptClone()) return;
+
+        // fallback list
+        const apps = (frappe.boot?.apps || []).filter(Boolean);
+        if (!apps.length) {
+            frappe.msgprint(translate("No apps available."));
+            return;
+        }
+
+        const overlay = $("<div>", {
+            id: "do-health-appswitcher-overlay",
+            class: "do-health-appswitcher-overlay",
+        }).css({
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            backdropFilter: "blur(5px)",
+            zIndex: 1050,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        });
+
+        const list = $("<div>", { class: "do-health-appswitcher" }).css({
+            display: "flex",
+            flexDirection: "column",
+            background: "rgba(15,23,42,0.98)",
+            padding: "1rem",
+            borderRadius: "14px",
+            minWidth: "240px",
+            boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+        });
+
+        apps.forEach((app) => {
+            $("<button>", {
+                text: app.app_title || app.app_name,
+                class: "do-health-appswitcher__item",
+            })
+                .css({
+                    background: "transparent",
+                    border: "none",
+                    color: "#e5e7eb",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    padding: "0.6rem 0.8rem",
+                    borderRadius: "8px",
+                    textAlign: "left",
+                    transition: "all 0.2s",
+                })
+                .hover(
+                    function () {
+                        $(this).css({ background: "#16a34a", color: "#fff" });
+                    },
+                    function () {
+                        $(this).css({ background: "transparent", color: "#e5e7eb" });
+                    }
+                )
+                .on("click", () => {
+                    overlay.fadeOut(150, () => overlay.remove());
+                    if (app.app_name !== "do_health") saveSidebarMode("standard");
+                    frappe.set_route(app.route || `/app/${app.app_name.replace(/_/g, "-")}`);
+                })
+                .appendTo(list);
+        });
+
+        overlay.append(list).on("click", (e) => {
+            if (e.target === overlay[0]) overlay.fadeOut(150, () => overlay.remove());
+        });
+
+        $("body").append(overlay.hide().fadeIn(150));
+    }
+
+    function renderPrimaryNav() {
+        const $nav = $(SELECTORS.nav);
+        if (!$nav.length) return;
+
+        const items = SIDEBAR_CONFIG.primary_nav || [];
+        if (!items.length) {
+            $nav.html(
+                `<div class="do-health-empty">${translate(
+                    "Add Health Sidebar Items (Section: Primary Nav) to populate this area."
+                )}</div>`
+            );
+            return;
+        }
+
+        $nav.empty();
+        items.forEach((item) => {
+            const button = $("<button>", {
+                type: "button",
+                class: "do-health-nav-button",
+                "data-item": item.name || item.label || ""
+            })
+                .append(
+                    $("<span>", { class: "do-health-nav-icon" }).html(
+                        iconMarkup(item.icon || "es-workspace", "md")
+                    ),
+                    $("<span>", { text: item.label || item.route_value })
+                )
+                .on("click", () => {
+                    navigateToItem(item, state.selectedPatient);
+                    setActiveNav(item);
                 });
 
-                if (result.message && result.message.length > 0) {
-                    const encounter = result.message[0];
-                    // Encounter exists - style it prominently in green
-                    $enc.removeClass("hidden")
-                        .attr("href", "#")
-                        .attr("title", `View existing encounter for ${patient.patient_name}`)
-                        .css({
-                            "color": "#155724",
-                            "background": "linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%)",
-                            "border-left": "4px solid #28a745",
-                            "font-weight": "600",
-                            "box-shadow": "0 2px 4px rgba(40, 167, 69, 0.2)"
-                        });
-
-                    // Add click handler to navigate without full page reload
-                    $enc.off("click").on("click", function (e) {
-                        e.preventDefault();
-                        frappe.set_route("Form", "Patient Encounter", encounter.name);
-                        // Banner will be shown by route change handler
-                    });
-
-                    // Add a checkmark indicator
-                    const $label = $enc.find(".sidebar-item-label");
-                    if ($label.length && !$enc.find(".encounter-status-indicator").length) {
-                        $label.append(
-                            $("<i>", {
-                                class: "fa fa-check-circle encounter-status-indicator",
-                                style: "margin-left: 8px; font-size: 12px; color: #28a745;"
-                            })
-                        );
-                    }
-                    return;
-                }
-            } catch (err) {
-                console.error("Failed to check for existing encounter:", err);
-            }
-        }
-
-        // No encounter exists - link to create new one with default styling
-        $enc.removeClass("hidden")
-            .attr("href", "#")
-            .attr("title", `Start new encounter for ${patient.patient_name}`)
-            .css({
-                "color": "",
-                "background": "",
-                "border-left": "",
-                "font-weight": "",
-                "box-shadow": ""
-            });
-
-        $chart.removeClass("hidden").attr("href", "/app/chart").attr("title", `Show Dental Chart for ${patient.patient_name}`)
-        $doc.removeClass("hidden").attr("href", "/app/patient-documents").attr("title", `Show Documents for ${patient.patient_name}`)
-
-
-        // Add click handler to navigate without full page reload
-        $enc.off("click").on("click", function (e) {
-            e.preventDefault();
-
-            // Target route
-            const doctype = "Patient Encounter";
-
-            // Listen for the form to load after routing
-            const waitForForm = frappe.router.on("change", () => {
-                const route = frappe.get_route();
-                if (route[0] === "Form" && route[1] === doctype && route[2] === "new") {
-                    // Unregister listener (to prevent multiple triggers)
-                    frappe.router.off("change", waitForForm);
-
-                    // Wait a short moment for the form object to be ready
-                    frappe.after_ajax(() => {
-                        const frm = cur_frm;
-                        if (!frm || frm.doctype !== doctype) return;
-
-                        // Set patient and appointment
-                        frm.set_value({
-                            patient: patient.patient,
-                            appointment: patient.appointment
-                        });
-
-                        // Fetch appointment_type from the appointment and apply
-                        frappe.db.get_value("Patient Appointment", patient.appointment, ["appointment_type", 'custom_appointment_category'])
-                            .then(r => {
-                                if (r.message && r.message.appointment_type) {
-                                    frm.set_value("appointment_type", r.message.appointment_type);
-                                }
-                                if (r.message && r.message.custom_appointment_category) {
-                                    frm.set_value("custom_appointment_category", r.message.custom_appointment_category);
-                                }
-                            });
-                    });
-                }
-            });
-
-            // Trigger the route change
-            frappe.set_route("Form", doctype, "new");
+            $nav.append(button);
         });
 
+        syncActiveNavWithRoute();
     }
 
-    // --- Context activation
-    function activatePatientContext(patient) {
-        const normalized = normalizePatient(patient);
-        if (!normalized) {
-            clearPatientContext();
-            return;
-        }
-        savePatientContext(normalized);
-        $(".active-waiting-patient").removeClass("active-waiting-patient");
-        $(`[data-patient='${normalized.patient}']`).addClass("active-waiting-patient");
-        enableSidebarActions(normalized);
+    function setActiveNav(item) {
+        const identifier = item.name || item.route_value || item.label;
+        state.activeNav = identifier;
+        updateActiveNavHighlight();
     }
 
-    function restorePatientContext() {
-        const saved = getSavedPatientContext();
-        if (!saved) {
-            disableSidebarActions();
-            return;
-        }
-        $(".active-waiting-patient").removeClass("active-waiting-patient");
-        $(`[data-patient='${saved.patient}']`).addClass("active-waiting-patient");
-        enableSidebarActions(saved);
+    function updateActiveNavHighlight() {
+        const current = state.activeNav;
+        const $buttons = $(SELECTORS.nav).find("button");
+
+        $buttons.each((_, el) => {
+            const $button = $(el);
+            $button.toggleClass("active", $button.data("item") === current);
+        });
     }
 
-    // --- Waiting patients
-    function renderWaitingPatients(patients = []) {
-        lastWaitingPatients = patients;
-        const $waiting = $(WAITING_SECTION_SELECTOR);
-        if (!$waiting.length) return;
+    function syncActiveNavWithRoute() {
+        const route = frappe.get_route();
+        const items = SIDEBAR_CONFIG.primary_nav || [];
+        const active = items.find((item) => {
+            const type = (item.route_type || "Workspace").toLowerCase();
+            if (type === "workspace") {
+                return route[0] === "Workspaces" && route[1] === item.route_value;
+            }
+            if (type === "page") {
+                return route[0] === item.route_value;
+            }
+            if (type === "form") {
+                return route[0] === "Form" && route[1] === item.route_value;
+            }
+            if (type === "report") {
+                return route[0] === "query-report" && route[1] === item.route_value;
+            }
+            return false;
+        });
 
-        const $child = $waiting.find(".sidebar-child-item");
-        if (!$child.length) return;
+        state.activeNav = active ? active.name || active.route_value || active.label : null;
+        updateActiveNavHighlight();
+    }
 
-        $child.empty();
+    function renderSelectedPatient(patient) {
+        const $container = $(SELECTORS.selected);
+        if (!$container.length) return;
 
-        if (!patients.length) {
-            $child.append(
-                $("<div>", { class: "sidebar-item-container" }).append(
-                    $("<div>", { class: "standard-sidebar-item" }).append(
-                        $("<div>", { class: "item-anchor" }).append(
-                            $("<span>", { class: "sidebar-item-icon" }).append(iconMarkup("users", "sm")),
-                            $("<span>", { class: "sidebar-item-label text-muted", text: translate("No patients") })
-                        )
-                    )
+        $container.empty();
+
+        if (!patient) {
+            $container.append(
+                $("<div>", { class: "do-health-selected__empty" }).text(
+                    translate("Select a patient from the waiting list to see details.")
                 )
             );
             return;
         }
 
-        // Group patients by practitioner
-        const groupedPatients = {};
-        patients.forEach((raw) => {
-            const patient = normalizePatient(raw);
-            const practitionerName = raw.practitioner_name || "Unassigned";
-            if (!groupedPatients[practitionerName]) {
-                groupedPatients[practitionerName] = [];
+        const initials = (patient.patient_name || patient.patient)
+            .split(" ")
+            .map((word) => word[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase();
+
+        const headerMetaParts = [];
+        if (patient.dob) {
+            headerMetaParts.push(`${__('Age')}: ${moment().diff(patient.dob, 'years')}`);
+        }
+        if (patient.custom_file_number) {
+            headerMetaParts.push(`${__('File')}: ${patient.custom_file_number}`);
+        }
+        if (patient.custom_cpr) {
+            headerMetaParts.push(`${__('CPR')}: ${patient.custom_cpr}`);
+        }
+        if (patient.mobile) {
+            headerMetaParts.push(patient.mobile);
+        }
+        const headerMeta = headerMetaParts.join(' | ');
+
+        const header = $("<div>", { class: "do-health-selected__header" }).append(
+            $("<div>", { class: "do-health-selected__avatar", text: patient.patient_image ? '' : initials }).append(
+                patient.patient_image ? $("<img>", { src: patient.patient_image, alt: "Patient Avatar" }) : null
+            ),
+            $("<div>", { class: "do-health-selected__info" }).append(
+                $("<div>", { class: "do-health-selected__name", text: patient.patient_name }),
+                $("<div>", {
+                    class: "do-health-selected__meta",
+                    text: `${headerMetaParts}`
+                })
+            ),
+            $("<button>", {
+                class: "do-health-selected__clear",
+                type: "button",
+                "aria-label": translate("Clear selection")
+            })
+                .html("&times;")
+                .on("click", clearPatientContext)
+        );
+
+        const $actions = $("<div>", { class: "do-health-selected-actions" });
+        renderPatientActions(patient, $actions);
+
+        const $footer = $("<div>", { class: "do-health-selected-footer" }).append(
+            $("<button>", {
+                class: "do-health-footer-btn primary",
+                type: "button",
+                text: translate("Encounter")
+            }).on("click", () => navigateToEncounter(patient)),
+            $("<button>", {
+                class: "do-health-footer-btn ghost",
+                type: "button",
+            }).append($('<i class="fa fa-commenting-o" aria-hidden="true"></i>'))
+            // .on("click", () => frappe.set_route("Form", "Patient", patient.patient)),
+        );
+
+        $container.append(header, $actions, $footer);
+    }
+
+    function renderPatientActions(patient, $container) {
+        if (!$container?.length) return;
+        const items = SIDEBAR_CONFIG.patient_actions || [];
+        $container.empty();
+
+        if (!items.length) {
+            $container.append(
+                $("<div>", { class: "do-health-empty" }).text(
+                    translate("Add Health Sidebar Items (Section: Patient Actions) to display actions here.")
+                )
+            );
+            return;
+        }
+
+        items.forEach((item) => {
+            const requiresPatient = !!item.requires_patient;
+            const disabled = requiresPatient && !patient;
+
+            const $action = $("<button>", {
+                class: `do-health-selected-action ${disabled ? "disabled" : ""}`,
+                type: "button",
+                "data-action": item.name || item.label
+            }).append(
+                $("<span>", { class: "do-health-selected-action__icon" }).html(
+                    iconMarkup(item.icon || "es-list", "md")
+                ),
+                $("<span>", { class: "do-health-selected-action__label", text: item.label }),
+                $("<span>", { class: "do-health-selected-action__chevron" })
+            );
+
+            const $badge = $("<div>", { class: "do-health-chip do-health-chip--time d-none" });
+
+            if (item.badge_method && (!requiresPatient || patient)) {
+                fetchActionBadge(item, patient).then((value) => {
+                    if (!value && value !== 0) return;
+                    $badge.text(value).removeClass("d-none");
+                });
             }
-            // Preserve all original fields plus normalized ones
-            groupedPatients[practitionerName].push({
-                ...patient,
-                practitioner_name: practitionerName,
-                custom_visit_status: raw.custom_visit_status  // Ensure status is preserved
-            });
+
+            $action.append($badge);
+
+            if (!disabled) {
+                $action.on("click", () => navigateToItem(item, patient));
+            } else {
+                $action.attr("title", translate("Select a patient first"));
+            }
+
+            $container.append($action);
         });
 
-        // Render each practitioner group
-        Object.keys(groupedPatients).sort().forEach((practitionerName) => {
-            const patientCount = groupedPatients[practitionerName].length;
-            const groupId = `practitioner-group-${practitionerName.replace(/\s+/g, '-')}`;
+        const $interactive = $container
+            .children(".do-health-selected-action")
+            .filter((_, el) => !$(el).hasClass("disabled"));
+        $interactive.first().addClass("active");
+    }
 
-            // Add practitioner header (collapsible)
-            const $header = $("<div>", {
-                class: "practitioner-header",
-                style: "padding: 8px 12px; background: #f8f9fa; font-weight: 600; font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 80px; z-index: 10; border-bottom: 1px solid #dee2e6; cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none;",
-                "data-group": groupId
-            });
+    function renderWaitingList(patients, { silent } = { silent: false }) {
+        const $list = $(SELECTORS.waitingList);
+        const $count = $(SELECTORS.waitingCount);
+        if (!$list.length) return;
 
-            const $headerLeft = $("<div>", { style: "display: flex; align-items: center; gap: 8px;" });
-            const $chevron = $("<i>", {
-                class: "fa fa-chevron-down",
-                style: "font-size: 10px; transition: transform 0.2s ease;"
-            });
-            const $nameText = $("<span>").text(practitionerName);
-            $headerLeft.append($chevron, $nameText);
+        $list.empty();
+        $count.text(patients.length);
 
-            const $badge = $("<span>", {
-                class: "badge",
-                style: "background: #69a5ff; color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;",
-                text: patientCount
-            });
+        if (!patients.length) {
+            $list.append(
+                $("<div>", { class: "do-health-empty" }).text(
+                    translate("No patients in the waiting list.")
+                )
+            );
+            return;
+        }
 
-            $header.append($headerLeft, $badge);
-            $child.append($header);
+        const grouped = patients.reduce((acc, patient) => {
+            const normalized = normalizePatient(patient);
+            if (!normalized) return acc;
+            const practitioner = normalized.practitioner_name || translate("Unassigned");
+            (acc[practitioner] = acc[practitioner] || []).push(normalized);
+            return acc;
+        }, {});
 
-            // Container for patients (collapsible)
-            const $groupContainer = $("<div>", {
-                class: "practitioner-group-container",
-                "data-group": groupId,
-                style: "overflow: hidden;"
-            });
-
-            // Add patients for this practitioner
-            groupedPatients[practitionerName].forEach((patient) => {
-                const mins = formatMinutesSince(patient.arrival_time);
-
-                const $item = $("<div>", {
-                    class: "sidebar-item-container",
-                    "data-patient": patient.patient
-                });
-                const $wrapper = $("<div>", { class: "standard-sidebar-item" });
-                const $anchor = $("<a>", {
-                    href: "#",
-                    class: "item-anchor w-100 d-flex justify-between"
-                });
-
-                $anchor.append(
-                    $("<span>", { class: "d-flex align-center" }).append(
-                        $("<span>", { class: "sidebar-item-icon" }).append(
-                            patient.patient_image
-                                ? $("<img>", { class: "icon icon-sm", src: patient.patient_image })
-                                : $("<div>", {
-                                    class: "avatar avatar-small",
-                                    style: "background-color: #6c757d; color: white; display: flex; align-items: center; justify-content: center; border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: 600;",
-                                    text: (patient.patient_name || "?").charAt(0).toUpperCase()
-                                })
-                        ),
-                        $("<span>", { class: "sidebar-item-label", text: patient.patient_name }),
-                        (patient.custom_visit_status && patient.custom_visit_status !== 'Arrived') ? $("<span>", {
-                            class: "status-badge",
-                            style: "margin-left: 6px; font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 600; background: " + getStatusColor(patient.custom_visit_status) + "; color: white;",
-                            text: patient.custom_visit_status
-                        }) : null
-                    ),
-                    $("<span>", { css: { marginLeft: "auto", color: "gray", fontSize: "12px" }, text: mins })
+        Object.keys(grouped)
+            .sort((a, b) => a.localeCompare(b))
+            .forEach((practitioner) => {
+                const groupPatients = grouped[practitioner];
+                const $group = $("<div>", { class: "do-health-waiting-group" });
+                $group.append(
+                    $("<div>", { class: "do-health-waiting-group__title" }).append(
+                        $("<span>", { text: practitioner }),
+                        $("<span>", { class: "badge", text: groupPatients.length })
+                    )
                 );
 
-                $anchor.on("click", (e) => {
-                    e.preventDefault();
-                    const saved = getSavedPatientContext();
-                    if (saved && saved.patient === patient.patient) {
-                        // If clicking the already selected patient, deselect
-                        clearPatientContext();
-                    } else {
-                        // Otherwise, select this patient
-                        activatePatientContext(patient);
+                const $items = $("<div>", { class: "do-health-waiting-items" });
+
+                groupPatients.forEach((patient) => {
+                    const minutes = formatMinutesSince(patient.arrival_time);
+                    const status = patient.custom_visit_status;
+                    const avatarText = (patient.patient_name || patient.patient)
+                        .charAt(0)
+                        .toUpperCase();
+
+                    const $item = $("<div>", {
+                        class: "do-health-waiting-item",
+                        "title": patient.patient_name,
+                        "data-patient": patient.patient,
+                        "data-appointment": patient.appointment,
+                    });
+
+                    if (state.selectedPatient?.patient === patient.patient && state.selectedPatient?.appointment === patient.appointment) {
+                        $item.addClass("active");
                     }
-                    // frappe.set_route("patient", patient.patient);
+
+                    const $avatar = patient.patient_image ? $("<div>", {
+                        class: "do-health-waiting-item__avatar",
+                    }).append($("<img>", { src: patient.patient_image, alt: "Patient Avatar", style: "width: 28px; height: 28px;" })) :
+                        $("<div>", {
+                            class: "do-health-waiting-item__avatar",
+                            text: avatarText
+                        });;
+
+                    const $body = $("<div>", { class: "do-health-waiting-item__body" }).append(
+                        $("<div>", { class: "title", text: patient.patient_name }),
+                        $("<div>", {
+                            class: "meta",
+                            text: patient.appointment_type || translate("No appointment type")
+                        })
+                    );
+
+                    const $right = $("<div>", { class: "do-health-waiting-item__right" }).append(
+                        $("<span>", {
+                            class: "do-health-chip do-health-chip--time",
+                            text: minutes || "–"
+                        }),
+                        status && status !== "Arrived"
+                            ? $("<span>", {
+                                class: "do-health-status-pill",
+                                css: { background: getStatusColor(status) },
+                                text: status
+                            })
+                            : null
+                    );
+
+                    $item.append($avatar, $body, $right);
+
+                    $item.on("click", (e) => {
+                        e.preventDefault();
+                        if (state.selectedPatient?.patient === patient.patient && state.selectedPatient?.appointment === patient.appointment) {
+                            clearPatientContext();
+                            return;
+                        }
+                        activatePatientContext(patient);
+                    });
+
+                    $items.append($item);
                 });
 
-                $wrapper.append($anchor);
-                $item.append($wrapper);
-                $groupContainer.append($item);
+                $group.append($items);
+                $list.append($group);
             });
 
-            // Add click handler for collapse/expand
-            $header.on("click", function () {
-                const $container = $(`.practitioner-group-container[data-group='${groupId}']`);
-                const $chevron = $(this).find(".fa-chevron-down");
+        if (!silent) {
+            $(SELECTORS.waitingList)
+                .closest(".do-health-scroll")
+                .scrollTop(0);
+        }
+    }
 
-                // Check if any patient in this group is selected
-                const hasSelectedPatient = $container.find(".active-waiting-patient").length > 0;
+    function fetchActionBadge(item, patient) {
+        const args = {};
+        if (patient) {
+            args.patient = patient.patient;
+            if (patient.appointment) {
+                args.appointment = patient.appointment;
+            }
+        }
 
-                if ($container.is(":visible")) {
-                    // Don't allow collapse if a patient is selected in this group
-                    if (hasSelectedPatient) {
-                        return;
+        return frappe
+            .call({
+                method: item.badge_method,
+                args
+            })
+            .then((response) => response?.message)
+            .catch((error) => {
+                console.warn("[do_health] Failed to fetch badge value", error);
+                return null;
+            });
+    }
+
+    function parseRouteParams(raw) {
+        if (!raw) return null;
+        if (typeof raw === "object") return raw;
+        try {
+            return JSON.parse(raw);
+        } catch (e) {
+            return { name: raw };
+        }
+    }
+
+    async function navigateToItem(item, patient) {
+        const requiresPatient = !!item.requires_patient;
+        if (requiresPatient && !patient) {
+            frappe.msgprint(translate("Select a patient first."));
+            return;
+        }
+
+        const params = parseRouteParams(item.route_params);
+        const routeType = (item.route_type || "Workspace").toLowerCase();
+
+        if (routeType === "workspace") {
+            frappe.set_route("Workspaces", item.route_value);
+            return;
+        }
+
+        if (routeType === "page") {
+            frappe.route_options = Object.assign({}, params || {}, requiresPatient ? { patient: patient.patient } : {});
+            frappe.set_route(item.route_value);
+            return;
+        }
+
+        if (routeType === "report") {
+            frappe.set_route("query-report", item.route_value);
+            return;
+        }
+
+        if (routeType === "url") {
+            const target = item.route_value;
+            if (target) frappe.set_route(target);
+            return;
+        }
+
+        if (routeType === "form") {
+            if (item.route_value === "Patient Encounter" && patient) {
+                await openEncounterForPatient(patient);
+                return;
+            }
+
+            if (requiresPatient) {
+                frappe.set_route("Form", item.route_value, patient.patient);
+                return;
+            }
+
+            if (params?.name === "new") {
+                frappe.new_doc(item.route_value);
+            } else if (params?.name) {
+                frappe.set_route("Form", item.route_value, params.name);
+            } else {
+                frappe.set_route("List", item.route_value);
+            }
+        }
+    }
+
+    async function navigateToEncounter(patient) {
+        await openEncounterForPatient(patient);
+    }
+
+    async function openEncounterForPatient(patient) {
+        if (!patient) return;
+
+        if (patient.appointment) {
+            try {
+                const { message } = await frappe.call({
+                    method: "frappe.client.get_list",
+                    args: {
+                        doctype: "Patient Encounter",
+                        filters: { appointment: patient.appointment },
+                        fields: ["name"],
+                        limit: 1
                     }
-                    // Collapse
-                    $container.hide();
-                    $chevron.css("transform", "rotate(-90deg)");
-                } else {
-                    // Expand
-                    $container.show();
-                    $chevron.css("transform", "rotate(0deg)");
-                }
-            });
+                });
 
-            $child.append($groupContainer);
+                if (message && message.length) {
+                    frappe.set_route("Form", "Patient Encounter", message[0].name);
+                    return;
+                }
+            } catch (error) {
+                console.warn("[do_health] Failed to check existing encounter", error);
+            }
+        }
+
+        frappe.new_doc("Patient Encounter", {
+            patient: patient.patient,
+            appointment: patient.appointment,
+            appointment_type: patient.appointment_type,
+            custom_appointment_category: patient.custom_appointment_category
         });
     }
 
-    async function fetchWaitingPatients() {
+    function activatePatientContext(patient) {
+        const normalized = normalizePatient(patient);
+        if (!normalized) return;
+
+        state.selectedPatient = normalized;
+        savePatientContext(normalized);
+
+        $(".do-health-waiting-item.active").removeClass("active");
+        $(`.do-health-waiting-item[data-patient="${normalized.patient}"][data-appointment="${normalized.appointment}"]`).addClass("active");
+
+        renderSelectedPatient(normalized);
+    }
+
+    function restorePatientContext() {
+        const saved = getSavedPatientContext();
+        if (!saved) {
+            renderSelectedPatient(null);
+            return;
+        }
+
+        state.selectedPatient = saved;
+        renderSelectedPatient(saved);
+    }
+
+    let waitingListHash = "";
+
+    async function fetchWaitingPatients(triggeredByRealtime = false) {
         try {
-            const r = await frappe.call({ method: "do_health.api.methods.get_waiting_list" });
-            let patients = r.message || [];
+            const response = await frappe.call({
+                method: "do_health.api.methods.get_waiting_list"
+            });
 
-            // If there's a selected patient, check if they're in the waiting list
-            const saved = getSavedPatientContext();
-            if (saved && saved.appointment) {
-                const isInList = patients.some(p => p.patient === saved.patient);
+            const patients = Array.isArray(response.message) ? response.message : [];
+            const normalized = patients.map(normalizePatient).filter(Boolean);
+            const newHash = JSON.stringify(normalized);
 
-                // If not in the waiting list, fetch their current appointment data
-                if (!isInList) {
-                    try {
-                        const appointmentData = await frappe.call({
-                            method: "frappe.client.get",
-                            args: {
-                                doctype: "Patient Appointment",
-                                name: saved.appointment,
-                                fields: ["name", "patient", "patient_name", "practitioner_name",
-                                    "custom_visit_status", "arrival_time", "patient_image"]
-                            }
-                        });
-
-                        if (appointmentData.message) {
-                            // Add the selected patient to the list with their current status
-                            patients = [appointmentData.message, ...patients];
-                        }
-                    } catch (err) {
-                        console.error("Failed to fetch selected patient appointment:", err);
-                    }
-                }
-            }
-
-            renderWaitingPatients(patients);
-            restorePatientContext();
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    // --- Init
-    function initSidebar() {
-        // Wait 500ms for sidebar to be built, then fetch
-        setTimeout(() => {
-            fetchWaitingPatients();
-        }, 500);
-
-        // Register realtime handler when socket is ready
-        if (!realtimeHandlerRegistered) {
-            function registerRealtimeHandler() {
-                if (!frappe.realtime?.socket?.connected) {
-                    setTimeout(registerRealtimeHandler, 200);
-                    return;
-                }
-
-                frappe.realtime.socket.on("do_health_waiting_list_update", (data) => {
-                    fetchWaitingPatients();
-                });
-            }
-
-            registerRealtimeHandler();
-            realtimeHandlerRegistered = true;
-        }
-
-        initialized = true;
-    }
-
-    frappe.router.on("change", () => {
-        const route = frappe.get_route();
-        if (route[0] === "Workspaces" && route[1] === "Appointments") {
-            if (!window._appointments_redirected) {
-                window._appointments_redirected = true;
-                frappe.set_route("patient-appointment/view/calendar/default");
-            }
-        } else {
-            window._appointments_redirected = false;
-        }
-
-        // Re-render sidebar after route change to maintain waiting list
-        if (initialized) {
-            setTimeout(() => {
-                if (lastWaitingPatients.length > 0) {
-                    renderWaitingPatients(lastWaitingPatients);
-                    restorePatientContext();
-                }
-
-                // Show patient banner if on encounter page
-                if (route[0] === "Form" && route[1] === "Patient Encounter") {
-                    const saved = getSavedPatientContext();
-                    if (saved && $(".do-health-patient-banner").length === 0) {
-                        setTimeout(() => {
-                            createPatientInfoBanner(saved);
-                        }, 400);
-                    }
-                }
-            }, 100);
-        }
-    });
-
-    frappe.after_ajax(() => {
-        if (!initialized) {
-            initSidebar();
-        } else {
-            if (lastWaitingPatients.length > 0) {
-                renderWaitingPatients(lastWaitingPatients);
+            if (!triggeredByRealtime || newHash !== waitingListHash) {
+                waitingListHash = newHash;
+                state.waiting = normalized;
+                renderWaitingList(state.waiting);
                 restorePatientContext();
             }
+        } catch (error) {
+            console.error("[do_health] Failed to fetch waiting patients", error);
+            frappe.show_alert({
+                message: translate("Unable to load waiting patients"),
+                indicator: "red"
+            });
+        }
+    }
+
+    function registerRealtime() {
+        if (state.realtimeRegistered) return;
+
+        const realtimeHandler = () => fetchWaitingPatients(true);
+
+        frappe.realtime.on("do_health_waiting_list_update", realtimeHandler);
+        frappe.realtime.on("patient_appointments_updated", realtimeHandler);
+        state.realtimeRegistered = true;
+    }
+
+    function registerAppSwitcherListener() {
+        if (appSwitcherListenerRegistered) return;
+        $(document).on("click.doHealthSidebar", ".app-link, .app-switcher-dropdown", (event) => {
+            const $target = $(event.currentTarget);
+            const appName = ($target.data("name") || "").toLowerCase();
+            const href = ($target.attr("href") || "").toLowerCase();
+            const label = ($target.find(".app-title").text() || $target.text() || "").toLowerCase();
+            const isHealth =
+                appName === "do_health" ||
+                href.includes("do-health") ||
+                label.includes("do health");
+            if (isHealth) {
+                saveSidebarMode("health");
+            } else if (appName || href) {
+                saveSidebarMode("standard");
+            }
+        });
+        appSwitcherListenerRegistered = true;
+    }
+
+    function initSidebar() {
+        if (!mountSidebarShell()) {
+            setTimeout(initSidebar, 200);
+            return;
+        }
+        applySidebarMode(state.mode);
+        renderPrimaryNav();
+        restorePatientContext();
+        renderWaitingList(state.waiting);
+        fetchWaitingPatients();
+        registerRealtime();
+        registerAppSwitcherListener();
+
+        frappe.router.on("change", syncActiveNavWithRoute);
+        state.initialized = true;
+    }
+
+    frappe.after_ajax(() => {
+        registerAppSwitcherListener();
+
+        if (!state.initialized) {
+            initSidebar();
+        } else {
+            fetchWaitingPatients();
         }
     });
 
     window.doHealthSidebar = window.doHealthSidebar || {};
     Object.assign(window.doHealthSidebar, {
+        config: SIDEBAR_CONFIG,
         selectPatient(patient) {
-            if (!initialized) {
-                initSidebar();
-            }
+            if (!state.initialized) initSidebar();
             activatePatientContext(patient);
         },
         clearSelection() {
             clearPatientContext();
         },
         getSelectedPatient() {
-            return getSavedPatientContext();
+            return state.selectedPatient || getSavedPatientContext();
         }
     });
 })();
