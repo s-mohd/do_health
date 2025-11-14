@@ -7,14 +7,24 @@
  "field_order": [
   "tab_2_tab",
   "file_number_naming_series",
+  "appointments_calendar_tab",
+  "calendar_configs_section",
+  "scheduler_license_key",
+  "default_calendar_view",
+  "resource_area_width",
+  "slot_duration",
+  "slot_min_time",
+  "slot_max_time",
+  "slot_label_interval",
+  "slot_height",
+  "action_menu_section",
+  "appointment_action_menu",
   "patient_encounter_tab",
   "side_tabs_section",
   "show_vital_signs",
   "vital_signs_tab_layout",
-  "vital_signs_editor",
   "show_patient_history",
   "patient_history_tab_layout",
-  "patient_history_editor",
   "column_break_ttba",
   "show_dental_charts"
  ],
@@ -71,28 +81,84 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "vital_signs_editor",
-   "fieldtype": "Code",
-   "label": "Vital Signs Editor",
-   "options": "JS"
-  },
-  {
-   "fieldname": "patient_history_editor",
-   "fieldtype": "Code",
-   "label": "Patient History Editor",
-   "options": "JS"
-  },
-  {
+   "default": "PAT-.YYYY.-.#####",
    "fieldname": "file_number_naming_series",
    "fieldtype": "Data",
    "label": "File Number Naming Series"
+  },
+  {
+   "fieldname": "appointments_calendar_tab",
+   "fieldtype": "Tab Break",
+   "label": "Appointments Calendar"
+  },
+  {
+   "fieldname": "calendar_configs_section",
+   "fieldtype": "Section Break",
+   "label": "Calendar Configs"
+  },
+  {
+   "default": "CC-Attribution-NonCommercial-NoDerivatives",
+   "fieldname": "scheduler_license_key",
+   "fieldtype": "Data",
+   "label": "Scheduler License Key"
+  },
+  {
+   "default": "resourceTimeGridDay",
+   "fieldname": "default_calendar_view",
+   "fieldtype": "Select",
+   "label": "Default Calendar View",
+   "options": "resourceTimeGridDay\nresourceTimeGridWeek\nresourceTimelineDay\nresourceTimelineWeek"
+  },
+  {
+   "default": "75px",
+   "description": "Width of the provider/resource column (e.g. 75px)",
+   "fieldname": "resource_area_width",
+   "fieldtype": "Data",
+   "label": "Resource Area Width"
+  },
+  {
+   "fieldname": "slot_duration",
+   "fieldtype": "Time",
+   "label": "Slot Duration"
+  },
+  {
+   "fieldname": "slot_min_time",
+   "fieldtype": "Time",
+   "label": "Slot Min Time"
+  },
+  {
+   "fieldname": "slot_max_time",
+   "fieldtype": "Time",
+   "label": "Slot Max Time"
+  },
+  {
+   "fieldname": "slot_label_interval",
+   "fieldtype": "Time",
+   "label": "Slot Label Interval"
+  },
+  {
+   "fieldname": "action_menu_section",
+   "fieldtype": "Section Break",
+   "label": "Appointment Action Menu"
+  },
+  {
+   "fieldname": "appointment_action_menu",
+   "fieldtype": "Table",
+   "label": "Action Items",
+   "options": "Appointment Action Menu Item"
+  },
+  {
+   "default": "1rem",
+   "fieldname": "slot_height",
+   "fieldtype": "Data",
+   "label": "Slot Height"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-11-08 00:45:48.604427",
+ "modified": "2025-11-14 09:25:28.987246",
  "modified_by": "Administrator",
  "module": "Do Health",
  "name": "Do Health Settings",

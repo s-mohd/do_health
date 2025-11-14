@@ -1,16 +1,40 @@
 
 // Patient Appointment Calendar enhancements: custom scheduler configuration, rendering, and actions.
-// Constants and configuration
-const CONFIG = {
+// Default configuration that can be overridden from Do Health Settings
+const DEFAULT_CALENDAR_CONFIG = {
     LICENSE_KEY: 'CC-Attribution-NonCommercial-NoDerivatives',
     DEFAULT_VIEW: 'resourceTimeGridDay',
     SLOT_DURATION: '00:15:00',
     SLOT_MIN_TIME: "08:00:00",
     SLOT_MAX_TIME: "20:00:00",
     SLOT_LABEL_INTERVAL: "01:00:00",
-    SCROLL_TIME: "09:00:00",
     RESOURCE_AREA_WIDTH: '75px'
 };
+
+// Appointment-level actions exposed through the context menu
+const DEFAULT_ACTION_MENU_ITEMS = [
+    // { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-thumb-tack' },
+    { action: 'editAppointment', label: 'Edit', icon: 'fa-pencil' },
+    { action: 'openAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
+    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-calendar-plus-o' },
+    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
+    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
+    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-credit-card' },
+    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
+    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-id-card-o' },
+    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-history' },
+];
+
+const PRACTITIONER_MENU_ITEMS = [
+    { action: 'openProfile', label: 'Open Practitioner Profile', icon: 'fa-user-md' },
+    { action: 'createAvailability', label: 'Practitioner Availability', icon: 'fa-calendar-check-o' }
+];
+
+const BOOT_CALENDAR_SETTINGS = frappe.boot?.do_health_calendar || {};
+const CONFIG = Object.assign({}, DEFAULT_CALENDAR_CONFIG, BOOT_CALENDAR_SETTINGS.config || {});
+const ACTION_MENU_ITEMS = (BOOT_CALENDAR_SETTINGS.action_menu_items && BOOT_CALENDAR_SETTINGS.action_menu_items.length
+    ? BOOT_CALENDAR_SETTINGS.action_menu_items
+    : DEFAULT_ACTION_MENU_ITEMS);
 
 const ROOM_UNASSIGNED_RESOURCE = '__room_unassigned__';
 
@@ -22,19 +46,6 @@ const VISIT_STATUS_OPTIONS = [
     { value: 'In Room', label: 'In Room', icon: 'fa-stethoscope' },
     { value: 'Completed', label: 'Completed', icon: 'fa-check-circle' },
     { value: 'Cancelled', label: 'Cancelled', icon: 'fa-times-circle' },
-];
-
-// Appointment-level actions exposed through the context menu
-const ACTION_MENU_ITEMS = [
-    { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-thumb-tack' },
-    { action: 'editAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
-    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-calendar-plus-o' },
-    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
-    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
-    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-credit-card' },
-    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
-    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-id-card-o' },
-    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-history' },
 ];
 
 frappe.views.calendar["Patient Appointment"] = {
@@ -50,7 +61,9 @@ frappe.views.calendar["Patient Appointment"] = {
         resourceFilters: {
             doctors: { showAll: false },
             rooms: { showAll: true }
-        }
+        },
+        isDatepickerSyncing: false,
+        isPointerDown: false
     },
 
     // Get CSS class names based on status
@@ -62,14 +75,74 @@ frappe.views.calendar["Patient Appointment"] = {
         return classNames;
     },
 
+    getCalendarApi: function () {
+        return cur_list?.calendar?.fullCalendar || null;
+    },
+
+    syncDatepickerWithCalendar: function (dateInput) {
+        const $picker = $('#monthdatepicker');
+        if (!$picker.length) {
+            return;
+        }
+
+        const state = this.state || {};
+        const calendarApi = this.getCalendarApi();
+        const candidate = dateInput
+            || state.lastViewInfo?.view?.currentStart
+            || calendarApi?.getDate?.()
+            || null;
+
+        if (!candidate) {
+            return;
+        }
+
+        const targetDate = new Date(candidate);
+        if (Number.isNaN(targetDate.getTime())) {
+            return;
+        }
+
+        const pickerInstance = $picker.data('datepicker');
+        let currentDate = null;
+
+        if (pickerInstance?.selectedDates?.length) {
+            currentDate = pickerInstance.selectedDates[0];
+        } else if (typeof $picker.datepicker === 'function') {
+            try {
+                currentDate = $picker.datepicker('getDate');
+            } catch (err) {
+                currentDate = null;
+            }
+        }
+
+        if (currentDate instanceof Date && currentDate.toDateString() === targetDate.toDateString()) {
+            return;
+        }
+
+        state.isDatepickerSyncing = true;
+        const disableSyncFlag = () => {
+            setTimeout(() => {
+                state.isDatepickerSyncing = false;
+            }, 0);
+        };
+
+        try {
+            if (pickerInstance && typeof pickerInstance.selectDate === 'function') {
+                pickerInstance.selectDate(targetDate);
+            } else if (typeof $picker.datepicker === 'function') {
+                $picker.datepicker('setDate', targetDate);
+            }
+        } finally {
+            disableSyncFlag();
+        }
+    },
+
     options: {
         themeSystem: 'standard',
+        height: 'calc(100vh - 100px)',
         schedulerLicenseKey: CONFIG.LICENSE_KEY,
 
         initialView: CONFIG.DEFAULT_VIEW,
         initialDate: get_session_date(),
-
-        scrollTime: CONFIG.SCROLL_TIME,
 
         slotMinTime: CONFIG.SLOT_MIN_TIME,
         slotMaxTime: CONFIG.SLOT_MAX_TIME,
@@ -95,7 +168,7 @@ frappe.views.calendar["Patient Appointment"] = {
         nowIndicator: true,
 
         selectMinDistance: 2,
-        nextDayThreshold: "08:00:00",
+        nextDayThreshold: CONFIG.SLOT_MIN_TIME,
 
         // header configuration
         headerToolbar: {
@@ -194,6 +267,30 @@ frappe.views.calendar["Patient Appointment"] = {
 
             // Add hover effects
             resourceObj.el.classList.add('resource-label');
+
+            if (resource.extendedProps?.type === 'practitioner') {
+                resourceObj.el.classList.add('practitioner-resource-label');
+                resourceObj.el.setAttribute('tabindex', '0');
+
+                const calendarView = frappe.views.calendar["Patient Appointment"];
+                const openMenu = (evt) => {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    const anchor = {
+                        x: evt.pageX ?? (resourceObj.el.getBoundingClientRect().left + window.scrollX),
+                        y: evt.pageY ?? (resourceObj.el.getBoundingClientRect().bottom + window.scrollY)
+                    };
+                    calendarView.showPractitionerMenu(resource, anchor);
+                };
+
+                resourceObj.el.addEventListener('click', openMenu);
+                // resourceObj.el.addEventListener('contextmenu', openMenu);
+                // resourceObj.el.addEventListener('keydown', (evt) => {
+                //     if (evt.key === 'Enter' || evt.key === ' ') {
+                //         openMenu(evt);
+                //     }
+                // });
+            }
         },
 
         // drop handler
@@ -257,22 +354,21 @@ frappe.views.calendar["Patient Appointment"] = {
 
         // event click handler
         eventClick: function (info) {
-            if (info.jsEvent) {
-                info.jsEvent.preventDefault();
-                info.jsEvent.stopPropagation();
-            }
-            const anchor = info.jsEvent
-                ? { x: info.jsEvent.pageX, y: info.jsEvent.pageY }
-                : {
-                    x: info.el.getBoundingClientRect().left + window.scrollX,
-                    y: info.el.getBoundingClientRect().bottom + window.scrollY
-                };
-            frappe.views.calendar["Patient Appointment"].showActionsMenu(info.event, anchor);
+            frappe.views.calendar["Patient Appointment"].hideActivePopovers();
+            appointmentActions.pinPatientToSidebar(info.event.id, info.event);
         },
 
         // event hover handler
         eventMouseLeave: function (info) {
             $(`[role="tooltip"].popover`).remove();
+        },
+
+        eventDragStart: function () {
+            frappe.views.calendar["Patient Appointment"].hideActivePopovers();
+        },
+
+        eventResizeStart: function () {
+            frappe.views.calendar["Patient Appointment"].hideActivePopovers();
         },
 
         // event drop handler
@@ -385,6 +481,7 @@ frappe.views.calendar["Patient Appointment"] = {
             calendarView.markUnavailableSlots(info).catch((err) => {
                 console.warn('Unable to mark unavailable slots', err);
             });
+            calendarView.syncDatepickerWithCalendar(info.view?.currentStart || info.start);
 
             if (cur_list?.page) {
                 const primaryActionLabel = __('Add Patient Appointment');
@@ -971,7 +1068,17 @@ frappe.views.calendar["Patient Appointment"] = {
         // Right-click should take the user straight to editing the appointment
         element.addEventListener('contextmenu', function (e) {
             e.preventDefault();
-            frappe.views.calendar["Patient Appointment"].handleAppointmentClick(info);
+            if (info.jsEvent) {
+                info.jsEvent.preventDefault();
+                info.jsEvent.stopPropagation();
+            }
+            const anchor = info.jsEvent
+                ? { x: info.jsEvent.pageX, y: info.jsEvent.pageY }
+                : {
+                    x: info.el.getBoundingClientRect().left + window.scrollX,
+                    y: info.el.getBoundingClientRect().bottom + window.scrollY
+                };
+            frappe.views.calendar["Patient Appointment"].showActionsMenu(info.event, anchor);
             // appointmentActions.editAppointment(event.id);
         });
 
@@ -1155,7 +1262,80 @@ frappe.views.calendar["Patient Appointment"] = {
             const handler = appointmentActions[actionKey];
             closeMenu();
             if (typeof handler === 'function') {
-                await handler(event.id, event.extendedProps, focusSection);
+                await handler(event.id, event, focusSection);
+            }
+        });
+    },
+
+    showPractitionerMenu: function (resource, anchor) {
+        if (!resource || resource.extendedProps?.type !== 'practitioner' || !PRACTITIONER_MENU_ITEMS.length) {
+            return;
+        }
+
+        const menuId = 'practitioner-action-menu';
+        $(`#${menuId}`).remove();
+
+        const $menu = $(`<div id="${menuId}" class="dropdown-menu show appointment-context-menu" role="menu"></div>`);
+        const safeName = this.escapeHtml(resource.title || resource.id || __('Practitioner'));
+        let menuHtml = `<div class="dropdown-header">${__('Actions for {0}', [safeName])}</div>`;
+        menuHtml += PRACTITIONER_MENU_ITEMS.map(item => `
+            <a class="dropdown-item js-practitioner-action" data-action="${item.action}">
+                <i class="fa ${item.icon}"></i> ${__(item.label)}
+            </a>
+        `).join('');
+
+        $menu.html(menuHtml);
+        $('body').append($menu);
+
+        const viewportWidth = $(window).width();
+        const viewportHeight = $(window).height();
+        const menuWidth = $menu.outerWidth();
+        const menuHeight = $menu.outerHeight();
+
+        let left = anchor.x;
+        let top = anchor.y;
+
+        if (left + menuWidth > viewportWidth) {
+            left = viewportWidth - menuWidth - 8;
+        }
+        if (top + menuHeight > viewportHeight + window.scrollY) {
+            top = anchor.y - menuHeight;
+        }
+
+        $menu.css({
+            position: 'absolute',
+            top: `${top}px`,
+            left: `${left}px`,
+            zIndex: 1050
+        });
+
+        const closeMenu = () => {
+            $menu.remove();
+            $(document).off('click', handleOutsideClick);
+            $(window).off('resize', closeMenu);
+            $('body').off('scroll', closeMenu);
+        };
+
+        const handleOutsideClick = (e) => {
+            if (!$(e.target).closest(`#${menuId}`).length) {
+                closeMenu();
+            }
+        };
+
+        setTimeout(() => {
+            $(document).on('click', handleOutsideClick);
+        }, 0);
+
+        $(window).on('resize', closeMenu);
+        $('body').on('scroll', closeMenu);
+
+        $menu.on('click', '.js-practitioner-action', function (e) {
+            e.preventDefault();
+            const actionKey = $(this).data('action');
+            const handler = practitionerActions[actionKey];
+            closeMenu();
+            if (typeof handler === 'function') {
+                handler(resource);
             }
         });
     },
@@ -1275,6 +1455,7 @@ frappe.views.calendar["Patient Appointment"] = {
         var modified_by = formatUserName(event.extendedProps.modified_by);
         const calendarView = frappe.views.calendar["Patient Appointment"];
         const escapeHtml = calendarView.escapeHtml.bind(calendarView);
+        calendarView.bindGlobalPointerGuards();
 
         const patientName = escapeHtml(event.extendedProps.full_name || event.title || '');
         const mobile = escapeHtml(event.extendedProps.mobile || '');
@@ -1382,14 +1563,59 @@ frappe.views.calendar["Patient Appointment"] = {
         element.insertAdjacentHTML('beforeend', popoverContent);
         $(`[role="tooltip"].popover`).remove();
         if (event.id) {
-            // Initialize popover
-            $(element).popover({
-                trigger: 'hover',
+            const $element = $(element);
+            $element.popover({
+                trigger: 'manual',
                 content: $(`#popoverX-${event.id}`).html(),
                 html: true,
                 placement: 'auto'
             });
+
+            element.addEventListener('mouseenter', function () {
+                if (calendarView.state.isPointerDown) {
+                    return;
+                }
+                calendarView.hideActivePopovers();
+                $element.popover('show');
+            });
+
+            element.addEventListener('mouseleave', function () {
+                $element.popover('hide');
+            });
+
+            element.addEventListener('mousedown', function () {
+                calendarView.state.isPointerDown = true;
+                calendarView.hideActivePopovers();
+            });
         }
+    },
+
+    bindGlobalPointerGuards: function () {
+        if (this._pointerGuardsBound) {
+            return;
+        }
+        const calendarView = this;
+        const resetPointer = function () {
+            calendarView.state.isPointerDown = false;
+        };
+        document.addEventListener('mouseup', resetPointer, true);
+        document.addEventListener('dragend', resetPointer, true);
+        document.addEventListener('touchend', resetPointer, true);
+        this._pointerGuardsBound = true;
+    },
+
+    hideActivePopovers: function () {
+        try {
+            $('.fc-event').each(function () {
+                const $el = $(this);
+                if (typeof $el.popover === 'function') {
+                    $el.popover('hide');
+                }
+            });
+        } catch (error) {
+            console.warn('Unable to hide popovers', error);
+        }
+        $(`[role="tooltip"].popover`).remove();
     },
 
     // Calculate event duration
@@ -1838,16 +2064,25 @@ function render_waiting_list_table(data) {
     if ($('#monthdatepicker').length == 0) {
         sessionStorage.server_update = 0;
 
+        const calendarView = frappe.views.calendar["Patient Appointment"];
         cur_list.$page.find(".layout-side-section .list-sidebar").prepend(function () {
-            // return $('<div id="monthdatepicker" style="width: 210px"></div>').datepicker({
             return $('<div id="monthdatepicker"></div>').datepicker({
                 language: 'en',
                 todayButton: new Date(),
-                onSelect: function (d, i) {
-                    if (i && d !== i.lastVal) {
-                        sessionStorage.selected_date = moment(i).format();
-                        // $('.fc').fullCalendar('gotoDate', i);
-                        cur_list.calendar.fullCalendar.gotoDate(i);
+                onSelect: function (formattedValue, selectedDate) {
+                    if (!selectedDate || !calendarView) {
+                        return;
+                    }
+                    if (calendarView.state?.isDatepickerSyncing) {
+                        return;
+                    }
+
+                    sessionStorage.selected_date = moment(selectedDate).format();
+                    const calendarApi = calendarView.getCalendarApi();
+                    if (calendarApi?.gotoDate) {
+                        calendarApi.gotoDate(selectedDate);
+                    } else if (cur_list?.calendar?.fullCalendar?.gotoDate) {
+                        cur_list.calendar.fullCalendar.gotoDate(selectedDate);
                     }
                 },
             });
@@ -1858,6 +2093,8 @@ function render_waiting_list_table(data) {
         $("div.col-lg-2.layout-side-section").css('max-width', '25%');      // increase the wating list width
         $("div.col-lg-2.layout-side-section").css('padding', '1px');
         $("div.monthdatepicker").css("width: 300px");
+
+        calendarView?.syncDatepickerWithCalendar();
     }
 }
 
@@ -1941,8 +2178,12 @@ const appointmentActions = {
     },
 
     // Appointment navigation & clinical flows --------------------------------
-    editAppointment(appointmentId) {
+    openAppointment(appointmentId) {
         frappe.set_route('Form', 'Patient Appointment', appointmentId);
+    },
+
+    editAppointment(appointmentId, event) {
+        frappe.views.calendar["Patient Appointment"].handleAppointmentClick({ event });
     },
 
     addVitalSigns(appointmentId) {
@@ -2692,19 +2933,34 @@ const appointmentActions = {
     },
 
 
-    async pinPatientToSidebar(appointmentId, context = {}) {
+    async pinPatientToSidebar(appointmentId, event = {}) {
         const sidebarApi = window.doHealthSidebar;
         if (!sidebarApi || typeof sidebarApi.selectPatient !== 'function') {
             frappe.show_alert({ message: __('Sidebar is not ready yet'), indicator: 'orange' });
             return;
         }
 
+        const context = event.extendedProps;
+
         let patientContext = {
             patient: context.patient || context.customer || context.patient_id || null,
             patient_name: context.full_name || context.patient_name || context.customer_name || context.customer || '',
             appointment: appointmentId,
             arrival_time: context.arrival_time || context.check_in_time || null,
-            patient_image: context.image || context.patient_image || null
+            patient_image: context.image || context.patient_image || null,
+            appointment_date: event.startStr.split('T')[0],
+            appointment_time: event.startStr.split('T')[1].split('+')[0],
+            appointment_type: context.appointment_type,
+            arrival_time: context.arrival_time,
+            custom_cpr: context.cpr,
+            custom_file_number: context.file_number,
+            custom_visit_status: context.status,
+            dob: context.birthdate,
+            gender: context.gender,
+            mobile: context.mobile,
+            name: appointmentId,
+            practitioner: context.practitioner,
+            practitioner_name: context.practitioner_name,
         };
 
         if (!patientContext.patient) {
@@ -2754,7 +3010,8 @@ const appointmentActions = {
         });
     },
 
-    async addVisitNote(appointmentId, context = {}) {
+    async addVisitNote(appointmentId, event = {}) {
+        const context = event.extendedProps;
         const defaults = context?.custom_visit_notes
             ? { custom_visit_notes: context.custom_visit_notes }
             : await appointmentActions.fetchAppointmentFields(appointmentId, 'custom_visit_notes');
@@ -3095,7 +3352,7 @@ let check_and_set_availability = function (event, is_new = false) {
         let selected_practitioner = '';
         let previousAppointmentType = initialAppointmentType;
         let d = new frappe.ui.Dialog({
-            title: __('Available slots'),
+            title: __('Patient Appointment'),
             fields: [
                 { fieldtype: 'Section Break', label: 'Patient Details', collapsible: 0 },
                 { fieldtype: 'Link', options: 'Patient', reqd: 1, fieldname: 'patient', label: 'Patient', default: event?.patient ? event.patient : '' },
@@ -3340,6 +3597,99 @@ let check_and_set_availability = function (event, is_new = false) {
                     });
                 }
             }
+        });
+
+        const dateField = d.fields_dict?.appointment_date;
+        const getDatepickerInstance = () => {
+            if (!dateField) {
+                return null;
+            }
+            return dateField.datepicker || dateField.$input?.data('datepicker') || null;
+        };
+
+        const applyDynamicPosition = () => {
+            const instance = getDatepickerInstance();
+            const inputEl = dateField?.$input?.get(0);
+            if (!instance || !instance.update || !inputEl) {
+                return;
+            }
+            const rect = inputEl.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            const showBelow = spaceAbove < spaceBelow;
+            instance.update({ position: showBelow ? 'bottom center' : 'top center' });
+        };
+
+        const ensureQuickButtons = () => {
+            const instance = getDatepickerInstance();
+            const pickerEl = instance?.$datepicker;
+            if (!pickerEl || pickerEl.data('has-quick-buttons')) {
+                return;
+            }
+
+            let buttonsContainer = pickerEl.find('.datepicker--buttons');
+            if (!buttonsContainer.length) {
+                pickerEl.append('<div class="datepicker--buttons"></div>');
+                buttonsContainer = pickerEl.find('.datepicker--buttons');
+            }
+
+            const makeJumpButton = (label, offset) => {
+                const $btn = $(`<span class="datepicker-jump-btn">${__(label)}</span>`);
+                $btn.on('click', () => {
+                    const currentValue = dateField.$input?.val();
+                    const baseMoment = currentValue && moment(currentValue, frappe.defaultDateFormat, true).isValid()
+                        ? moment(currentValue, frappe.defaultDateFormat)
+                        : moment();
+
+                    if (offset.type === 'days') {
+                        baseMoment.add(offset.value, 'days');
+                    } else if (offset.type === 'months') {
+                        baseMoment.add(offset.value, 'months');
+                    }
+
+                    const nextDate = baseMoment.toDate();
+                    instance.selectDate(nextDate);
+                    instance.hide();
+                    dateField.$input.trigger('change');
+                });
+                return $btn;
+            };
+
+            buttonsContainer.append([
+                makeJumpButton('After a Week', { type: 'days', value: 7 }),
+                makeJumpButton('After a Month', { type: 'months', value: 1 }),
+                makeJumpButton('After 6 Months', { type: 'months', value: 6 })
+            ]);
+
+            pickerEl.data('has-quick-buttons', true);
+        };
+
+        const bindDatepickerEnhancements = () => {
+            if (!dateField?.$input) {
+                return;
+            }
+            dateField.$input.on('focus.dynamic-datepicker click.dynamic-datepicker keyup.dynamic-datepicker', () => {
+                setTimeout(() => {
+                    applyDynamicPosition();
+                    ensureQuickButtons();
+                }, 0);
+            });
+        };
+
+        const cleanupDatepickerEnhancements = () => {
+            dateField?.$input?.off('.dynamic-datepicker');
+        };
+
+        d.$wrapper.on('shown.bs.modal', () => {
+            bindDatepickerEnhancements();
+            setTimeout(() => {
+                applyDynamicPosition();
+                ensureQuickButtons();
+            }, 50);
+        });
+
+        d.$wrapper.on('hidden.bs.modal', () => {
+            cleanupDatepickerEnhancements();
         });
 
         // Set initial values safely
@@ -3706,8 +4056,42 @@ const SEhumanizer = humanizeDuration.humanizer({
     },
 });
 
+const practitionerActions = {
+    openProfile(resource) {
+        if (!resource?.id) {
+            frappe.show_alert({ message: __('Unable to determine practitioner'), indicator: 'orange' });
+            return;
+        }
+        frappe.set_route('Form', 'Healthcare Practitioner', resource.id);
+    },
+
+    createAvailability(resource) {
+        if (!resource?.id) {
+            frappe.show_alert({ message: __('Unable to determine practitioner'), indicator: 'orange' });
+            return;
+        }
+
+        const selectedDate = sessionStorage.selected_date
+            ? moment(sessionStorage.selected_date).format('YYYY-MM-DD')
+            : frappe.datetime.get_today();
+
+        frappe.new_doc('Practitioner Availability', {}, (doc) => {
+            doc.scope_type = 'Healthcare Practitioner';
+            doc.scope = resource.id;
+            doc.start_date = selectedDate;
+            doc.end_date = selectedDate;
+        });
+    }
+};
+
 const enhancedStyles = `
 <style>
+
+.fc .fc-timegrid-slot {
+    height: ${CONFIG.SLOT_HEIGHT || '1rem'};
+    min-height: ${CONFIG.SLOT_HEIGHT || '1rem'};
+}
+
 /* Status-based background colors */
 .status-scheduled { 
     background: linear-gradient(135deg, #D6EAF8, #AED6F1) !important; 
@@ -4005,6 +4389,29 @@ const enhancedStyles = `
 .appointment-event .appt-invoice-ref {
     font-size: 11px;
     color: #475569;
+}
+.datepicker--buttons{
+    flex-wrap: wrap;
+}
+.datepicker--button{
+    flex: 50%;
+}
+.datepicker-jump-btn {
+    color: #4EB5E6;
+    cursor: pointer;
+    border-radius: 4px;
+    display: -ms-inline-flexbox;
+    display: inline-flex;
+    -ms-flex-pack: center;
+    justify-content: center;
+    -ms-flex-align: center;
+    align-items: center;
+    height: 32px;
+    flex: 50%;
+}
+.datepicker-jump-btn:hover {
+    color: var(--text-color);
+    background-color: var(--fg-hover-color);
 }
 
 .appointment-event--tight .appt-meta {

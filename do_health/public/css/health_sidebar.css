@@ -1,12 +1,19 @@
+html {
+    scroll-behavior: smooth;
+}
+
 :root {
-    --do-health-bg: #0a0f14;
-    --do-health-panel: #111827;
-    --do-health-border: rgba(255, 255, 255, 0.06);
-    --do-health-text: #f9fafb;
-    --do-health-text-muted: #9ca3af;
+    --do-health-bg: #f8fafc;
+    --do-health-panel: #ffffff;
+    --do-health-panel-alt: #f1f5f9;
+    --do-health-border: rgba(15, 23, 42, 0.08);
+    --do-health-border-strong: rgba(15, 23, 42, 0.16);
+    --do-health-text: #0f172a;
+    --do-health-text-muted: #64748b;
     --do-health-accent: #16a34a;
     --do-health-accent-hover: #22c55e;
     --do-health-accent-muted: rgba(22, 163, 74, 0.18);
+    --do-health-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
 }
 
 body.do-health-sidebar-active .body-sidebar-container {
@@ -40,7 +47,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 
     background: var(--do-health-bg);
     border-right: 1px solid var(--do-health-border);
-    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--do-health-shadow);
 }
 
 #do-health-sidebar .do-health-scroll {
@@ -54,7 +61,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 #do-health-sidebar .do-health-scroll::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.2);
     border-radius: 999px;
 }
 
@@ -119,13 +126,13 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     line-height: 1.2;
 
     color: var(--do-health-text-muted);
-    background: transparent;
+    background: rgba(15, 23, 42, 0.02);
     transition: background 0.25s, color 0.25s;
 }
 
 .do-health-nav-button:hover {
     color: var(--do-health-text);
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(15, 23, 42, 0.06);
 }
 
 .do-health-nav-button.active {
@@ -137,8 +144,8 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 30px;
+    height: 30px;
     border-radius: 5px;
 }
 
@@ -147,7 +154,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-nav-button.active .do-health-nav-icon {
-    background: hsl(159.31deg 100% 22.75%);
+    background: var(--do-health-accent);
 }
 
 .do-health-nav-button.active svg {
@@ -169,10 +176,10 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     flex-direction: column;
     gap: 1rem;
     padding: 0.75rem;
-    box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.02), 0 0 8px rgba(0, 0, 0, 0.25);
+    box-shadow: inset 0 0 12px rgba(15, 23, 42, 0.03), 0 0 8px rgba(15, 23, 42, 0.08);
 
-    background: hsl(200deg 11.39% 15.49%);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    background: var(--do-health-panel);
+    border: 1px solid var(--do-health-border);
 }
 
 .do-health-secondary-toggle {
@@ -190,17 +197,16 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     z-index: 12;
     transition: all 0.25s ease;
 
-    background: hsl(200deg 11.39% 15.49%);
-    border: none;
+    background: var(--do-health-panel);
+    border: 1px solid var(--do-health-border);
     border-radius: 0 35px 35px 0;
     width: 26px;
     height: 70px;
-    color: #f9fafb;
-    box-shadow: 0 0 6px rgba(0, 0, 0, 0.25);
+    color: var(--do-health-text);
 }
 
 .do-health-secondary-toggle:hover {
-    background: var(--do-health-accent);
+    /* background: var(--do-health-accent); */
     color: #fff;
 }
 
@@ -248,9 +254,9 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-secondary__section {
-    background: rgba(0, 0, 0, 0.18);
+    background: var(--do-health-panel-alt);
     border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--do-health-border);
     padding: 0.7rem;
     display: flex;
     flex-direction: column;
@@ -266,7 +272,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--do-health-border);
     padding-bottom: 0.25rem;
     margin-bottom: 0.5rem;
 }
@@ -279,7 +285,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 
 .do-health-section__refresh {
     border: none;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.05);
     color: var(--do-health-text);
     padding: 0.25rem 0.65rem;
     border-radius: 8px;
@@ -289,6 +295,48 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 .do-health-waiting__scroll {
     max-height: calc(100vh - 420px);
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+}
+
+.do-health-waiting__scroll::-webkit-scrollbar {
+    width: 8px;
+}
+
+.do-health-waiting__scroll::-webkit-scrollbar-track {
+    background: transparent;
+    margin: 6px;
+}
+
+.do-health-waiting__scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.18), rgba(15, 23, 42, 0.28));
+    border-radius: 999px;
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.do-health-waiting__scroll:hover::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(34, 197, 94, 0.4), rgba(22, 163, 74, 0.3));
+    box-shadow: 0 0 6px rgba(22, 163, 74, 0.3);
+}
+
+.do-health-waiting__scroll::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(180deg, rgba(34, 197, 94, 0.7), rgba(22, 163, 74, 0.5));
+}
+
+.do-health-waiting__scroll::after {
+    content: "";
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    background: linear-gradient(to bottom, transparent, rgba(248, 250, 252, 1));
+    pointer-events: none;
+    z-index: 2;
 }
 
 #do-health-selected {
@@ -296,8 +344,10 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     flex-direction: column;
     gap: 0.4rem;
 
-    background-color: hsl(0deg 0% 0%);
+    background-color: var(--do-health-panel);
     border-radius: 12px;
+    border: 1px solid var(--do-health-border);
+    box-shadow: var(--do-health-shadow);
 }
 
 .do-health-selected__header {
@@ -328,8 +378,8 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     font-weight: 700;
     font-size: 16px;
 
-    background: rgba(255, 255, 255, 0.15);
-    border: 2px solid rgba(255, 255, 255, 0.25);
+    background: rgba(22, 163, 74, 0.15);
+    border: 2px solid rgba(22, 163, 74, 0.35);
 }
 
 .do-health-selected__avatar img {
@@ -381,9 +431,10 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(15, 23, 42, 0.02);
     border-radius: 10px;
     padding: 0.4rem 0.3rem;
+    border: 1px solid var(--do-health-border);
 }
 
 .do-health-selected-action {
@@ -396,8 +447,8 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     justify-content: space-between;
     cursor: pointer;
 
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(15, 23, 42, 0.02);
+    border: 1px solid var(--do-health-border);
 }
 
 .do-health-selected-action.disabled {
@@ -409,10 +460,11 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     width: 32px;
     height: 32px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.06);
     display: flex;
     align-items: center;
     justify-content: center;
+    color: var(--do-health-text-muted);
 }
 
 .do-health-selected-action__label {
@@ -438,7 +490,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-selected-action.active .do-health-selected-action__icon {
-    background: rgba(0, 0, 0, 0.12);
+    background: rgba(255, 255, 255, 0.4);
 }
 
 .do-health-selected-action .do-health-chip {
@@ -452,7 +504,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-footer-btn {
-    background: transparent;
+    background: rgba(15, 23, 42, 0.02);
     color: var(--do-health-text);
 
     flex: 1;
@@ -460,7 +512,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     padding: 0.45rem 0.5rem;
     font-size: 12px;
     font-weight: 600;
-    border: none;
+    border: 1px solid var(--do-health-border);
     cursor: pointer;
     transition: all 0.2s ease;
 }
@@ -471,7 +523,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     font-weight: 600;
     box-shadow: 0 2px 8px rgba(22, 163, 74, 0.25);
 
-    background: hsl(159.31deg 100% 22.75%);
+    background: var(--do-health-accent);
     color: #fff;
 }
 
@@ -480,15 +532,15 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-footer-btn.ghost {
-    background: rgba(255, 255, 255, 0.08);
-    color: #e5e7eb;
+    background: rgba(15, 23, 42, 0.05);
+    color: var(--do-health-text);
 }
 
 .do-health-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.05);
     padding: 0.2rem 0.55rem;
     border-radius: 999px;
     font-size: 11px;
@@ -524,7 +576,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-waiting-group__title .badge {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(15, 23, 42, 0.1);
     padding: 0.1rem 0.4rem;
     border-radius: 999px;
     font-size: 10px;
@@ -544,31 +596,32 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     border-radius: 12px;
     cursor: pointer;
 
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(15, 23, 42, 0.02);
+    border: 1px solid var(--do-health-border);
     transition: background 0.2s, border 0.2s;
 }
 
 .do-health-waiting-item:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.06);
 }
 
 .do-health-waiting-item.active {
     border-color: var(--do-health-accent);
     box-shadow: 0 0 0 1px var(--do-health-accent);
-    background: rgba(22, 163, 74, 0.15);
+    background: rgba(22, 163, 74, 0.12);
 }
 
 .do-health-waiting-item__avatar {
     width: 28px;
     height: 28px;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.08);
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
     text-transform: uppercase;
+    color: var(--do-health-text);
 }
 
 .do-health-waiting-item__body {
@@ -603,7 +656,8 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     border-radius: 999px;
     font-size: 10px;
     font-weight: 600;
-    color: white;
+    color: var(--do-health-text);
+    background: rgba(15, 23, 42, 0.08);
 }
 
 .do-health-chip--time {
@@ -665,18 +719,19 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     gap: 0.5rem;
     padding: 0.45rem 0.6rem;
     border-radius: 8px;
-    background: transparent;
-    color: var(--do-health-text-muted);
+    background: rgba(15, 23, 42, 0.02);
+    color: var(--do-health-text);
     font-size: 13px;
     cursor: pointer;
     transition: background 0.2s, color 0.2s;
+    border: 1px solid var(--do-health-border);
 }
 
 .do-health-selected-action:not(.active):hover {
     border-color: var(--do-health-accent);
 
     background: rgba(34, 197, 94, 0.15);
-    color: #fff;
+    color: var(--do-health-text);
 }
 
 .do-health-selected-action__icon {
@@ -686,14 +741,14 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--do-health-text-muted);
+    background: rgba(15, 23, 42, 0.08);
+    color: var(--do-health-text);
     font-size: 14px;
 }
 
 .do-health-selected-action.active .do-health-selected-action__icon {
-    background: rgba(0, 0, 0, 0.2);
-    color: white;
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--do-health-text);
 }
 
 .do-health-selected-action__label {
@@ -708,8 +763,8 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 
 /* === WAITING CARD POLISH === */
 .do-health-card {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(15, 23, 42, 0.02);
+    border: 1px solid var(--do-health-border);
     transition: all 0.2s;
 }
 
@@ -738,11 +793,11 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    border: none;
+    border: 1px solid var(--do-health-border);
     border-radius: 8px;
     padding: 0.45rem 0.7rem;
-    background: transparent;
-    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.02);
+    color: var(--do-health-text);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -756,7 +811,8 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #cbd5e1;
+    background: rgba(15, 23, 42, 0.05);
+    color: var(--do-health-text);
     font-size: 14px;
 }
 
@@ -765,5 +821,5 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 }
 
 .do-health-footer-btn.ghost:hover {
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(15, 23, 42, 0.08);
 }

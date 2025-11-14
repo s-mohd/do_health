@@ -317,10 +317,6 @@
             if (menuHidden && $nativeToggle.length) $nativeToggle.trigger("click");
 
             const $clone = $menu.clone(true, true).attr("id", "do-health-appswitcher-clone");
-            $clone.css({
-                background: "rgba(15,23,42,0.95)",
-                border: "1px solid rgba(255,255,255,0.08)",
-            });
 
             $("body").append($clone);
             positionClone($clone);

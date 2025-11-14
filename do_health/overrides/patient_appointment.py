@@ -6,7 +6,7 @@ from healthcare.healthcare.doctype.fee_validity.fee_validity import manage_fee_v
 
 class CustomPatientAppointment(PatientAppointment):
 	def validate(self):
-		self.validate_overlaps()
+		# self.validate_overlaps()
 		self.validate_based_on_appointments_for()
 		self.validate_service_unit()
 		self.set_appointment_datetime()

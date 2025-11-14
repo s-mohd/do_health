@@ -1319,6 +1319,7 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	sqlcommand = """SELECT
 	appo.name 						as name,
 	appo.practitioner 				as resource,
+	appo.practitioner_name 			as practitioner_name,
 	appo.creation 					as creation,
 	appo.patient_name 				as patient_name,
 	appo.patient					as patient,
@@ -1354,7 +1355,8 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	pat.patient_name 				as full_name,
 	pat.mobile 						as mobile,
 	pat.dob 						as birthdate,
-	pat.custom_cpr 					as cpr
+	pat.custom_cpr 					as cpr,
+	pat.sex 						as gender
 	from `tabPatient Appointment` 	as appo
 	LEFT JOIN `tabPatient` 	as pat ON pat.name = appo.patient
 	LEFT JOIN `tabHealthcare Practitioner` as prov ON prov.name = appo.practitioner
