@@ -14,21 +14,21 @@ const DEFAULT_CALENDAR_CONFIG = {
 
 // Appointment-level actions exposed through the context menu
 const DEFAULT_ACTION_MENU_ITEMS = [
-    // { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-duotone fa-thumbtack' },
-    { action: 'editAppointment', label: 'Edit', icon: 'fa-duotone fa-pen-to-square' },
-    { action: 'openAppointment', label: 'Open Appointment', icon: 'fa-duotone fa-arrow-up-right-from-square' },
-    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-duotone fa-calendar-circle-plus' },
-    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-duotone fa-file-lines' },
-    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-duotone fa-heart-pulse' },
-    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-duotone fa-file-invoice-dollar' },
-    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-duotone fa-note-sticky' },
-    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-duotone fa-id-card-clip' },
-    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-duotone fa-clipboard-list' },
+    // { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-regular fa-thumbtack' },
+    { action: 'editAppointment', label: 'Edit', icon: 'fa-regular fa-pen-to-square' },
+    { action: 'openAppointment', label: 'Open Appointment', icon: 'fa-regular fa-arrow-up-right-from-square' },
+    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-regular fa-calendar-circle-plus' },
+    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-regular fa-file-lines' },
+    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-regular fa-heart-pulse' },
+    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-regular fa-file-invoice-dollar' },
+    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-regular fa-note-sticky' },
+    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-regular fa-id-card-clip' },
+    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-regular fa-clipboard-list' },
 ];
 
 const PRACTITIONER_MENU_ITEMS = [
-    { action: 'openProfile', label: 'Open Practitioner Profile', icon: 'fa-duotone fa-user-doctor' },
-    { action: 'createAvailability', label: 'Practitioner Availability', icon: 'fa-duotone fa-calendar-check' }
+    { action: 'openProfile', label: 'Open Practitioner Profile', icon: 'fa-regular fa-user-doctor' },
+    { action: 'createAvailability', label: 'Practitioner Availability', icon: 'fa-regular fa-calendar-check' }
 ];
 
 const BOOT_CALENDAR_SETTINGS = frappe.boot?.do_health_calendar || {};
@@ -41,12 +41,12 @@ const ROOM_UNASSIGNED_RESOURCE = '__room_unassigned__';
 
 // Quick visit status shortcuts surfaced in the context menu
 const VISIT_STATUS_OPTIONS = [
-    { value: 'Scheduled', label: 'Scheduled', icon: 'fa-duotone fa-calendar-days' },
-    { value: 'Arrived', label: 'Arrived', icon: 'fa-duotone fa-person-walking-arrow-right' },
-    { value: 'Ready', label: 'Ready', icon: 'fa-duotone fa-circle-check' },
-    { value: 'In Room', label: 'In Room', icon: 'fa-duotone fa-bed-pulse' },
-    { value: 'Completed', label: 'Completed', icon: 'fa-duotone fa-clipboard-check' },
-    { value: 'Cancelled', label: 'Cancelled', icon: 'fa-duotone fa-circle-xmark' },
+    { value: 'Scheduled', label: 'Scheduled', icon: 'fa-regular fa-calendar-days' },
+    { value: 'Arrived', label: 'Arrived', icon: 'fa-regular fa-person-walking-arrow-right' },
+    { value: 'Ready', label: 'Ready', icon: 'fa-regular fa-circle-check' },
+    { value: 'In Room', label: 'In Room', icon: 'fa-regular fa-stethoscope' },
+    { value: 'Completed', label: 'Completed', icon: 'fa-regular fa-clipboard-check' },
+    { value: 'Cancelled', label: 'Cancelled', icon: 'fa-regular fa-circle-xmark' },
 ];
 
 frappe.views.calendar["Patient Appointment"] = {
@@ -3937,7 +3937,7 @@ let check_and_set_availability = function (event, is_new = false) {
             slot_html += `
                 <span><b>
                 ${__('Practitioner Schedule: ')} </b> ${slot_info.slot_name}
-                    ${slot_info.tele_conf && !slot_info.allow_overlap ? '<i class="fa-duotone fa-video fa-1x" aria-hidden="true"></i>' : ''}
+                    ${slot_info.tele_conf && !slot_info.allow_overlap ? '<i class="fa-regular fa-video fa-1x" aria-hidden="true"></i>' : ''}
                 </span><br>
                 ${slot_info.service_unit ? `<span><b> ${__('Service Unit: ')} </b> ${slot_info.service_unit}</span>` : ''}`;
             if (slot_info.service_unit_capacity) {
