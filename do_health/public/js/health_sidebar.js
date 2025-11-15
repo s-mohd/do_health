@@ -547,7 +547,7 @@
             $("<button>", {
                 class: "do-health-footer-btn ghost",
                 type: "button",
-            }).append($('<i class="fa fa-commenting-o" aria-hidden="true"></i>'))
+            }).append($('<i class="fa-regular fa-message-lines fa-lg"></i>'))
             // .on("click", () => frappe.set_route("Form", "Patient", patient.patient)),
         );
 
