@@ -33,6 +33,7 @@ app_include_css = [
     "/assets/frappe/node_modules/air-datepicker/dist/css/datepicker.min.css",
     "/assets/do_health/css/patient_encounter.css",
     "/assets/do_health/css/health_sidebar.css",
+    "/assets/do_health/css/fontawesome/css/all.css",
 ]
 app_include_js = [
     "/assets/do_health/js/apps_switcher.js",

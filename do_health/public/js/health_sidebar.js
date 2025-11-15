@@ -130,11 +130,12 @@
     }
 
     function iconMarkup(name, size = "md") {
-        if (frappe?.utils?.icon) {
-            return frappe.utils.icon(name, size);
-        }
-        const symbolId = name?.startsWith("es-") ? name : `icon-${name || "circle"}`;
-        return `<svg class="icon icon-${size}"><use href="#${symbolId}"></use></svg>`;
+        // if (frappe?.utils?.icon) {
+        //     return frappe.utils.icon(name, size);
+        // }
+        // const symbolId = name?.startsWith("es-") ? name : `icon-${name || "circle"}`;
+        // return `<svg class="icon icon-${size}"><use href="#${symbolId}"></use></svg>`;
+        return `<i class="${name}"></i>`;
     }
 
     let sidebarMountAttempts = 0;

@@ -43,7 +43,7 @@
    "label": "Description"
   },
   {
-   "description": "Any valid icon id (e.g. es-home, heroicons:users)",
+   "description": "Any valid fa icon class (e.g. fa-solid fa-house, fa-jelly fa-regular fa-address-card)",
    "fieldname": "icon",
    "fieldtype": "Data",
    "label": "Icon"
@@ -70,7 +70,6 @@
   },
   {
    "default": "0",
-   "depends_on": "eval:doc.section==\"Patient Actions\"",
    "fieldname": "requires_patient",
    "fieldtype": "Check",
    "label": "Requires Selected Patient"
@@ -110,7 +109,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-11-10 10:20:41.427855",
+ "modified": "2025-11-15 15:10:15.519101",
  "modified_by": "Administrator",
  "module": "Do Health",
  "name": "Health Sidebar Item",
