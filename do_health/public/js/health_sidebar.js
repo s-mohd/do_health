@@ -486,7 +486,7 @@
         if (!patient) {
             $container.append(
                 $("<div>", { class: "do-health-selected__empty" }).text(
-                    translate("Select a patient from the waiting list to see details.")
+                    translate("Select a patient from the calendar or waiting list to see details.")
                 )
             );
             return;
