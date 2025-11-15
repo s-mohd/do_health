@@ -327,4 +327,5 @@ scheduler_events = {
 fixtures = [
     {"dt": "Custom Field", "filters": {"module": "Do Health"}},
 	{"dt": "Property Setter", "filters": {"module": "Do Health"}},
+    {"dt": "Health Sidebar Item"},
 ]

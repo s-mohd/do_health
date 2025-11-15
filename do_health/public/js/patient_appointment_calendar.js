@@ -8,26 +8,27 @@ const DEFAULT_CALENDAR_CONFIG = {
     SLOT_MIN_TIME: "08:00:00",
     SLOT_MAX_TIME: "20:00:00",
     SLOT_LABEL_INTERVAL: "01:00:00",
-    RESOURCE_AREA_WIDTH: '75px'
+    RESOURCE_AREA_WIDTH: '75px',
+    SIDEBAR_DATEPICKER_WIDTH: '220px'
 };
 
 // Appointment-level actions exposed through the context menu
 const DEFAULT_ACTION_MENU_ITEMS = [
-    // { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-thumb-tack' },
-    { action: 'editAppointment', label: 'Edit', icon: 'fa-pencil' },
-    { action: 'openAppointment', label: 'Open Appointment', icon: 'fa-external-link' },
-    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-calendar-plus-o' },
-    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-file-text' },
-    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-heartbeat' },
-    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-credit-card' },
-    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-sticky-note' },
-    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-id-card-o' },
-    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-history' },
+    // { action: 'pinPatientToSidebar', label: 'Pin Patient to Sidebar', icon: 'fa-duotone fa-thumbtack' },
+    { action: 'editAppointment', label: 'Edit', icon: 'fa-duotone fa-pen-to-square' },
+    { action: 'openAppointment', label: 'Open Appointment', icon: 'fa-duotone fa-arrow-up-right-from-square' },
+    { action: 'bookFollowUp', label: 'Book Follow-up', icon: 'fa-duotone fa-calendar-circle-plus' },
+    // { action: 'addPatientEncounter', label: 'Patient Encounter', icon: 'fa-duotone fa-file-lines' },
+    { action: 'addVitalSigns', label: 'Capture Vital Signs', icon: 'fa-duotone fa-heart-pulse' },
+    { action: 'openBillingInterface', label: 'Billing & Payment', icon: 'fa-duotone fa-file-invoice-dollar' },
+    // { action: 'addVisitNote', label: 'Add Visit Notes', icon: 'fa-duotone fa-note-sticky' },
+    { action: 'cprReading', label: 'CPR Reading', icon: 'fa-duotone fa-id-card-clip' },
+    { action: 'showVisitLog', label: 'Visit Log', icon: 'fa-duotone fa-clipboard-list' },
 ];
 
 const PRACTITIONER_MENU_ITEMS = [
-    { action: 'openProfile', label: 'Open Practitioner Profile', icon: 'fa-user-md' },
-    { action: 'createAvailability', label: 'Practitioner Availability', icon: 'fa-calendar-check-o' }
+    { action: 'openProfile', label: 'Open Practitioner Profile', icon: 'fa-duotone fa-user-doctor' },
+    { action: 'createAvailability', label: 'Practitioner Availability', icon: 'fa-duotone fa-calendar-check' }
 ];
 
 const BOOT_CALENDAR_SETTINGS = frappe.boot?.do_health_calendar || {};
@@ -40,12 +41,12 @@ const ROOM_UNASSIGNED_RESOURCE = '__room_unassigned__';
 
 // Quick visit status shortcuts surfaced in the context menu
 const VISIT_STATUS_OPTIONS = [
-    { value: 'Scheduled', label: 'Scheduled', icon: 'fa-calendar' },
-    { value: 'Arrived', label: 'Arrived', icon: 'fa-sign-in' },
-    { value: 'Ready', label: 'Ready', icon: 'fa-check-square-o' },
-    { value: 'In Room', label: 'In Room', icon: 'fa-stethoscope' },
-    { value: 'Completed', label: 'Completed', icon: 'fa-check-circle' },
-    { value: 'Cancelled', label: 'Cancelled', icon: 'fa-times-circle' },
+    { value: 'Scheduled', label: 'Scheduled', icon: 'fa-duotone fa-calendar-days' },
+    { value: 'Arrived', label: 'Arrived', icon: 'fa-duotone fa-person-walking-arrow-right' },
+    { value: 'Ready', label: 'Ready', icon: 'fa-duotone fa-circle-check' },
+    { value: 'In Room', label: 'In Room', icon: 'fa-duotone fa-bed-pulse' },
+    { value: 'Completed', label: 'Completed', icon: 'fa-duotone fa-clipboard-check' },
+    { value: 'Cancelled', label: 'Cancelled', icon: 'fa-duotone fa-circle-xmark' },
 ];
 
 frappe.views.calendar["Patient Appointment"] = {
@@ -467,8 +468,8 @@ frappe.views.calendar["Patient Appointment"] = {
                 sessionStorage.just_logged_in = 0;
             }
 
+            render_datepicker();
             set_current_session(info.view);
-            update_waiting_list();
             sessionStorage.server_update = 0;
 
             // Update current view state
@@ -1175,7 +1176,7 @@ frappe.views.calendar["Patient Appointment"] = {
                     ${VISIT_STATUS_OPTIONS.map(status => `
                     <a class="dropdown-item js-status-option ${status.value.toLowerCase() === activeStatus ? 'active' : ''}"
                         data-status="${status.value}">
-                        <i class="fa ${status.icon}"></i> ${__(status.label)}
+                        <i class="${status.icon}"></i> ${__(status.label)}
                     </a>
                     `).join('')}
                 </div>
@@ -1190,7 +1191,7 @@ frappe.views.calendar["Patient Appointment"] = {
             menuHtml += `<div class="dropdown-header">${__('Appointment Actions')}</div>`;
             menuHtml += ACTION_MENU_ITEMS.map(item => `
                 <a class="dropdown-item js-action-item" data-action="${item.action}">
-                    <i class="fa ${item.icon}"></i> ${__(item.label)}
+                    <i class="${item.icon}"></i> ${__(item.label)}
                 </a>
             `).join('');
         }
@@ -1280,7 +1281,7 @@ frappe.views.calendar["Patient Appointment"] = {
         let menuHtml = `<div class="dropdown-header">${__('Actions for {0}', [safeName])}</div>`;
         menuHtml += PRACTITIONER_MENU_ITEMS.map(item => `
             <a class="dropdown-item js-practitioner-action" data-action="${item.action}">
-                <i class="fa ${item.icon}"></i> ${__(item.label)}
+                <i class="${item.icon}"></i> ${__(item.label)}
             </a>
         `).join('');
 
@@ -1678,7 +1679,7 @@ frappe.views.calendar["Patient Appointment"] = {
 
         const billingLine = `
             <div class="appt-finance-line appt-billing">
-                <i class="fa fa-credit-card"></i>
+                <i class="fa-regular fa-credit-card-front"></i>
                 <span class="badge badge-${billingBadgeClass}">${billingLabel}</span>
                 ${salesInvoiceLabel ? `<span class="appt-invoice-ref">${salesInvoiceLabel}</span>` : ''}
             </div>
@@ -1686,7 +1687,7 @@ frappe.views.calendar["Patient Appointment"] = {
 
         const insuranceLine = `
             <div class="appt-finance-line appt-insurance">
-                <i class="fa fa-shield"></i>
+                <i class="fa-regular fa-shield-heart"></i>
                 <span class="badge badge-${insuranceBadgeClass}">${insuranceLabel}</span>
                 ${insuranceInvoiceLabel ? `<span class="appt-invoice-ref">${insuranceInvoiceLabel}</span>` : ''}
             </div>
@@ -1700,19 +1701,19 @@ frappe.views.calendar["Patient Appointment"] = {
                         ${safeBookType === 'Walked In' ?
                     `<svg xmlns="http://www.w3.org/2000/svg" height="12" width="12" viewBox="0 0 640 640"><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M320 144C350.9 144 376 118.9 376 88C376 57.1 350.9 32 320 32C289.1 32 264 57.1 264 88C264 118.9 289.1 144 320 144zM233.4 291.9L256 269.3L256 338.6C256 366.6 268.2 393.3 289.5 411.5L360.9 472.7C366.8 477.8 370.7 484.8 371.8 492.5L384.4 580.6C386.9 598.1 403.1 610.3 420.6 607.8C438.1 605.3 450.3 589.1 447.8 571.6L435.2 483.5C431.9 460.4 420.3 439.4 402.6 424.2L368.1 394.6L368.1 279.4L371.9 284.1C390.1 306.9 417.7 320.1 446.9 320.1L480.1 320.1C497.8 320.1 512.1 305.8 512.1 288.1C512.1 270.4 497.8 256.1 480.1 256.1L446.9 256.1C437.2 256.1 428 251.7 421.9 244.1L404 221.7C381 192.9 346.1 176.1 309.2 176.1C277 176.1 246.1 188.9 223.4 211.7L188.1 246.6C170.1 264.6 160 289 160 314.5L160 352C160 369.7 174.3 384 192 384C209.7 384 224 369.7 224 352L224 314.5C224 306 227.4 297.9 233.4 291.9zM245.8 471.3C244.3 476.5 241.5 481.3 237.7 485.1L169.4 553.4C156.9 565.9 156.9 586.2 169.4 598.7C181.9 611.2 202.2 611.2 214.7 598.7L283 530.4C294.5 518.9 302.9 504.6 307.4 488.9L309.6 481.3L263.6 441.9C261.1 439.7 258.6 437.5 256.2 435.1L245.8 471.3z"/></svg>` :
                     safeBookType === 'Rescheduled' ?
-                        '<i class="fa fa-repeat" aria-hidden="true"></i>' : ''
+                        '<i class="fa-regular fa-arrow-rotate-right" aria-hidden="true"></i>' : ''
                 }
                         <div class="appt-duration">${duration || calendarView.calculateDuration(arg.event)}m</div>
                     </div>
                     <div class="appt-meta">
-                        ${safeType ? `<div class="appt-type"><i class="fa fa-comment-o"></i> ${safeType}</div>` : ''}
+                        ${safeType ? `<div class="appt-type"><i class="fa-regular fa-clipboard-list"></i> ${safeType}</div>` : ''}
                         ${safeStatus ? `<div class="appt-type fs-1 font-weight-bolder">${safeStatus}</div>` : ''}
                     </div>
                 </div>
                 `
-            // ${safeReason ? `<div class="appt-type"><i class="fa fa-user-md"></i> ${safeReason}</div>` : ''}
-            // ${safeRoom ? `<div class="appt-room"><i class="fa fa-home"></i> ${safeRoom}</div>` : ''}
-            // ${safeNote ? `<div class="appt-note"><i class="fa fa-commenting"></i> ${safeNote}</div>` : ''}
+            // ${safeReason ? `<div class="appt-type"><i class="fa-regular fa-user-doctor"></i> ${safeReason}</div>` : ''}
+            // ${safeRoom ? `<div class="appt-room"><i class="fa-regular fa-bed"></i> ${safeRoom}</div>` : ''}
+            // ${safeNote ? `<div class="appt-note"><i class="fa-regular fa-comments"></i> ${safeNote}</div>` : ''}
             // <div class="appt-finance">
             //     ${billingLine}
             //     ${insuranceLine}
@@ -2060,12 +2061,13 @@ function update_waiting_list() {
         }
     });
 }
-function render_waiting_list_table(data) {
+
+function render_datepicker() {
     if ($('#monthdatepicker').length == 0) {
         sessionStorage.server_update = 0;
 
         const calendarView = frappe.views.calendar["Patient Appointment"];
-        cur_list.$page.find(".layout-side-section .list-sidebar").prepend(function () {
+        cur_list.$page.find(".layout-side-section .list-sidebar").html(function () {
             return $('<div id="monthdatepicker"></div>').datepicker({
                 language: 'en',
                 todayButton: new Date(),
@@ -2092,7 +2094,6 @@ function render_waiting_list_table(data) {
         // $('#mycss').css('background-color','#FFFFFF').css('padding','10px');
         $("div.col-lg-2.layout-side-section").css('max-width', '25%');      // increase the wating list width
         $("div.col-lg-2.layout-side-section").css('padding', '1px');
-        $("div.monthdatepicker").css("width: 300px");
 
         calendarView?.syncDatepickerWithCalendar();
     }
@@ -3045,11 +3046,16 @@ const appointmentActions = {
     },
 
     async bookFollowUp(appointmentId) {
-        let details = await appointmentActions.fetchAppointmentFields(appointmentId, ['patient', 'practitioner']);
+        let details = await appointmentActions.fetchAppointmentFields(appointmentId,
+            ['patient', 'practitioner', 'appointment_type', 'duration']
+        );
         const defaultEvent = {
             practitioner: details.practitioner,
             patient: details.patient,
+            appointment_type: details.appointment_type,
+            duration: details.duration,
             custom_appointment_category: 'Follow-up',
+            custom_past_appointment: appointmentId,
 
             // 'appointment_category': event.custom_appointment_category,
             // 'appointment_type': event.appointment_type,
@@ -3366,6 +3372,7 @@ let check_and_set_availability = function (event, is_new = false) {
                 { fieldtype: 'Data', fieldname: 'appointment_for', label: 'Appointment For', hidden: 1, default: initialAppointmentFor },
                 { fieldtype: 'Int', fieldname: 'duration', label: 'Duration', default: initialDuration },
                 { fieldtype: 'Select', options: 'First Time\nFollow-up\nProcedure\nSession', fieldname: 'appointment_category', label: 'Appointment Category', default: event?.custom_appointment_category ? event.custom_appointment_category : '' },
+                { fieldtype: 'Link', options: 'Patient Appointment', fieldname: 'custom_past_appointment', hidden: 1, default: event?.custom_past_appointment ? event.custom_past_appointment : '' },
                 { fieldtype: 'Link', options: 'Visit Reason', fieldname: 'visit_reason', label: 'Visit Reason', default: event?.visit_reason ? event.visit_reason : '' },
                 { fieldtype: 'Column Break' },
                 { fieldtype: 'Link', fieldname: 'branch', options: 'Branch', label: 'Branch', default: event?.branch ? event.branch : '' },
@@ -3387,6 +3394,7 @@ let check_and_set_availability = function (event, is_new = false) {
                     'custom_appointment_category': d.get_value('appointment_category'),
                     'status': d.get_value('status'),
                     'appointment_type': d.get_value('appointment_type'),
+                    'custom_past_appointment': d.get_value('custom_past_appointment'),
                     'appointment_for': d.get_value('appointment_for'),
                     'duration': d.get_value('duration'),
                     'custom_visit_reason': d.get_value('visit_reason'),
@@ -3417,6 +3425,7 @@ let check_and_set_availability = function (event, is_new = false) {
                         'custom_appointment_category': data.custom_appointment_category,
                         'status': data.status,
                         'appointment_type': data.appointment_type,
+                        'custom_past_appointment': data.custom_past_appointment,
                         'appointment_for': data.appointment_for,
                         'duration': data.duration,
                         'reminded': data.reminded,
@@ -3493,6 +3502,9 @@ let check_and_set_availability = function (event, is_new = false) {
                             }
                             if (data.appointment_type !== latest_doc.appointment_type) {
                                 updateQueue.push(() => updateField('appointment_type', data.appointment_type));
+                            }
+                            if (data.custom_past_appointment !== latest_doc.custom_past_appointment) {
+                                updateQueue.push(() => updateField('custom_past_appointment', data.custom_past_appointment));
                             }
                             if (data.appointment_for !== latest_doc.appointment_for) {
                                 updateQueue.push(() => updateField('appointment_for', data.appointment_for));
@@ -3706,6 +3718,7 @@ let check_and_set_availability = function (event, is_new = false) {
                     'appointment_category': event.custom_appointment_category,
                     'status': event.status,
                     'appointment_type': event.appointment_type,
+                    'custom_past_appointment': event.custom_past_appointment,
                     'duration': event.duration,
                     'confirmed': event.custom_confirmed,
                     'reminded': event.reminded,
@@ -3924,7 +3937,7 @@ let check_and_set_availability = function (event, is_new = false) {
             slot_html += `
                 <span><b>
                 ${__('Practitioner Schedule: ')} </b> ${slot_info.slot_name}
-                    ${slot_info.tele_conf && !slot_info.allow_overlap ? '<i class="fa fa-video-camera fa-1x" aria-hidden="true"></i>' : ''}
+                    ${slot_info.tele_conf && !slot_info.allow_overlap ? '<i class="fa-duotone fa-video fa-1x" aria-hidden="true"></i>' : ''}
                 </span><br>
                 ${slot_info.service_unit ? `<span><b> ${__('Service Unit: ')} </b> ${slot_info.service_unit}</span>` : ''}`;
             if (slot_info.service_unit_capacity) {
@@ -4086,6 +4099,11 @@ const practitionerActions = {
 
 const enhancedStyles = `
 <style>
+
+:root {
+    --do-health-month-picker-font-size: 11px;
+    --do-health-month-picker-cell-size: 26px;
+}
 
 .fc .fc-timegrid-slot {
     height: ${CONFIG.SLOT_HEIGHT || '1rem'};
@@ -4460,6 +4478,42 @@ const enhancedStyles = `
     font-size: 10px;
     position: absolute;
     right: 5px;
+}
+
+#monthdatepicker .datepicker {
+    font-size: var(--do-health-month-picker-font-size);
+    padding: 0.35rem 0.45rem 0.5rem;
+    width: min-content;
+    min-width: calc((var(--do-health-month-picker-cell-size) * 7) + 10px);
+}
+
+#monthdatepicker .datepicker--nav {
+    margin-bottom: 0.15rem;
+    padding: 0 0.15rem;
+}
+
+#monthdatepicker .datepicker--nav-action,
+#monthdatepicker .datepicker--nav-title {
+    font-size: calc(var(--do-health-month-picker-font-size) - 1px);
+    padding: 0.15rem 0.2rem;
+    line-height: 1.2;
+}
+
+#monthdatepicker .datepicker--day-name {
+    font-size: calc(var(--do-health-month-picker-font-size) - 1px);
+    padding: 0.1rem 0;
+}
+
+#monthdatepicker .datepicker--cell-day {
+    width: var(--do-health-month-picker-cell-size);
+    height: calc(var(--do-health-month-picker-cell-size) - 4px);
+    line-height: calc(var(--do-health-month-picker-cell-size) - 6px);
+    padding: 0;
+    font-size: var(--do-health-month-picker-font-size);
+}
+
+#monthdatepicker .datepicker--cell-day.-other-month- {
+    opacity: 0.4;
 }
 </style>
 `;

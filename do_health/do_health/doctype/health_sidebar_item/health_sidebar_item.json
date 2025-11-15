@@ -43,7 +43,7 @@
    "label": "Description"
   },
   {
-   "description": "Any valid fa icon class (e.g. fa-solid fa-house, fa-jelly fa-regular fa-address-card)",
+   "description": "Any valid fa icon class (e.g. fa-solid fa-house, fa-jelly fa-regular fa-address-card) \ngo to https://fontawesome.com/search to brows the icons",
    "fieldname": "icon",
    "fieldtype": "Data",
    "label": "Icon"
@@ -109,7 +109,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-11-15 15:10:15.519101",
+ "modified": "2025-11-15 17:27:25.882987",
  "modified_by": "Administrator",
  "module": "Do Health",
  "name": "Health Sidebar Item",

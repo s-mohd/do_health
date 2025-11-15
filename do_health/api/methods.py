@@ -1340,6 +1340,7 @@ def get_events_full_calendar(start, end, filters=None,field_map=None):
 	appo.appointment_datetime 		as starts_at,
 	appo.appointment_type 			as appointment_type,
 	appo.custom_visit_reason 		as visit_reason,
+	appo.custom_past_appointment	as custom_past_appointment,
 	appo.custom_confirmed	 		as confirmed,
 	appo.reminded	 				as reminded,
 	TIMESTAMPADD(minute,appo.duration,appo.appointment_datetime) 	as ends_at,
