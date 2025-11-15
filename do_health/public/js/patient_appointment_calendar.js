@@ -304,44 +304,42 @@ frappe.views.calendar["Patient Appointment"] = {
         // custom buttons
         customButtons: {
             doctors: {
-                text: __('Doctors'),
+                text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].handleResourceButtonClick('doctors');
                 }
             },
             rooms: {
-                text: __('Rooms'),
+                text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].handleResourceButtonClick('rooms');
                 }
             },
             cancelled: {
-                text: frappe.views.calendar["Patient Appointment"]?.state?.showcancelled ? 'Hide Cancelled' : 'Show Cancelled',
+                text: '',
                 click: function () {
-                    frappe.views.calendar["Patient Appointment"].state.showcancelled = !frappe.views.calendar["Patient Appointment"].state.showcancelled;
+                    const calendarView = frappe.views.calendar["Patient Appointment"];
+                    calendarView.state.showcancelled = !calendarView.state.showcancelled;
                     cur_list.calendar.fullCalendar.refetchEvents()
                     cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
 
-                    if (frappe.views.calendar["Patient Appointment"].state.showcancelled)
-                        $(this).text('Hide Cancelled')
-                    else
-                        $(this).text('Show Cancelled')
+                    calendarView.updateCancelledButtonLabel();
                 }
             },
             toggleSide: {
-                text: '☰',
+                text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].toggleSidebar();
                 }
             },
             jumpToNow: {
-                text: '⏰ Now',
+                text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].jumpToCurrentTime();
                 }
             },
             searchAppointments: {
-                text: '🔍 Search',
+                text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].showSearchDialog();
                 }
@@ -477,6 +475,8 @@ frappe.views.calendar["Patient Appointment"] = {
             calendarView.state.currentView = info.view.type;
             calendarView.state.lastViewInfo = info;
             calendarView.updateResourceModeButtons(calendarView.state.resourceMode);
+            calendarView.updateCancelledButtonLabel();
+            calendarView.updateStaticButtonLabels();
             calendarView.updateResourceAreaHeader();
             calendarView.ensureUnavailableSlotStyles();
             calendarView.markUnavailableSlots(info).catch((err) => {
@@ -885,6 +885,48 @@ frappe.views.calendar["Patient Appointment"] = {
         }
     },
 
+    updateToolbarButtonLabel: function (selector, label) {
+        const $button = $(selector);
+        if (!$button.length) {
+            return;
+        }
+
+        const current = $button.data('applied-label');
+        if (current === label) {
+            return;
+        }
+
+        if (!$button.data('initial-icon-html')) {
+            const $icon = $button.find('i, svg').first();
+            if ($icon.length) {
+                $button.data('initial-icon-html', $icon.prop('outerHTML'));
+            } else {
+                $button.data('initial-icon-html', '');
+            }
+        }
+
+        const iconHtml = $button.data('initial-icon-html') || '';
+        $button.empty();
+        if (iconHtml) {
+            $button.append($(iconHtml));
+        }
+
+        const $label = $('<span class="fc-button-label"></span>').text(label);
+        $button.append($label);
+        $button.data('applied-label', label);
+    },
+
+    updateCancelledButtonLabel: function () {
+        const label = this.state.showcancelled ? __('Hide Cancelled') : __('Show Cancelled');
+        this.updateToolbarButtonLabel('.fc-cancelled-button', label);
+    },
+
+    updateStaticButtonLabels: function () {
+        this.updateToolbarButtonLabel('.fc-toggleSide-button', '☰');
+        this.updateToolbarButtonLabel('.fc-jumpToNow-button', '⏰ Now');
+        this.updateToolbarButtonLabel('.fc-searchAppointments-button', '🔍 Search');
+    },
+
     updateResourceModeButtons: function (activeMode) {
         ['doctors', 'rooms'].forEach(mode => {
             const button = $(`.fc-${mode}-button`);
@@ -892,7 +934,8 @@ frappe.views.calendar["Patient Appointment"] = {
 
             const baseLabel = mode === 'rooms' ? __('Rooms') : __('Doctors');
             const descriptor = this.isShowAllResources(mode) && mode !== 'rooms' ? __('(All)') : '';
-            button.text(`${baseLabel} ${descriptor}`);
+            const labelText = `${baseLabel}${descriptor ? ` ${descriptor}` : ''}`;
+            this.updateToolbarButtonLabel(`.fc-${mode}-button`, labelText.trim());
 
             if (mode === activeMode) {
                 button.addClass('btn-primary').removeClass('btn-secondary');
@@ -2063,6 +2106,7 @@ function update_waiting_list() {
 }
 
 function render_datepicker() {
+    cur_list.$page.find('.custom-actions').addClass('hidden');
     if ($('#monthdatepicker').length == 0) {
         sessionStorage.server_update = 0;
 

@@ -378,13 +378,14 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     font-weight: 700;
     font-size: 16px;
 
+    overflow: hidden;
     background: rgba(22, 163, 74, 0.15);
     border: 2px solid rgba(22, 163, 74, 0.35);
 }
 
 .do-health-selected__avatar img {
-    width: 42px;
-    height: 42px;
+    height: 100%;
+    width: auto;
     border-radius: 10px;
 }
 
