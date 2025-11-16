@@ -456,6 +456,7 @@
 
     function syncActiveNavWithRoute() {
         const route = frappe.get_route();
+        if (!route) return;
         const items = SIDEBAR_CONFIG.primary_nav || [];
         const active = items.find((item) => {
             const type = (item.route_type || "Workspace").toLowerCase();
