@@ -2264,6 +2264,22 @@ function render_datepicker() {
                         cur_list.calendar.fullCalendar.gotoDate(selectedDate);
                     }
                 },
+                onChangeMonth: function (month, year) {
+                    // Fetch and display appointment counts when month changes
+                    updateAppointmentBadges(month, year);
+                },
+                onRenderCell: function (date, cellType) {
+                    if (cellType === 'day') {
+                        const dateStr = moment(date).format('YYYY-MM-DD');
+                        const count = window._appointmentCounts?.[dateStr] || 0;
+                        
+                        if (count > 0) {
+                            return {
+                                html: date.getDate() + `<span class="appointment-badge">${count}</span>`
+                            };
+                        }
+                    }
+                }
             });
 
         });
@@ -2273,7 +2289,40 @@ function render_datepicker() {
         $("div.col-lg-2.layout-side-section").css('padding', '1px');
 
         calendarView?.syncDatepickerWithCalendar();
+        
+        // Initial load of appointment badges
+        const now = new Date();
+        updateAppointmentBadges(now.getMonth(), now.getFullYear());
     }
+}
+
+function updateAppointmentBadges(month, year) {
+    // Calculate start and end dates for the month
+    const startDate = moment([year, month, 1]).format('YYYY-MM-DD');
+    const endDate = moment([year, month]).add(1, 'month').format('YYYY-MM-DD');
+    
+    frappe.call({
+        method: 'do_health.api.methods.get_appointment_counts_for_month',
+        args: {
+            start_date: startDate,
+            end_date: endDate
+        },
+        callback: function(r) {
+            if (r.message) {
+                window._appointmentCounts = r.message;
+                
+                // Update the datepicker to show badges
+                const $picker = $('#monthdatepicker');
+                if ($picker.length) {
+                    const pickerInstance = $picker.data('datepicker');
+                    if (pickerInstance) {
+                        // Force re-render of the calendar
+                        pickerInstance.update();
+                    }
+                }
+            }
+        }
+    });
 }
 
 function set_current_session(view) {
