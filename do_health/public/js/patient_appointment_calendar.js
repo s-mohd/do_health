@@ -39,6 +39,9 @@ const ACTION_MENU_ITEMS = (BOOT_CALENDAR_SETTINGS.action_menu_items && BOOT_CALE
 
 const ROOM_UNASSIGNED_RESOURCE = '__room_unassigned__';
 
+// LocalStorage keys for filter persistence
+const FILTER_STORAGE_KEY = 'patient_appointment_calendar_filters';
+
 // Quick visit status shortcuts surfaced in the context menu
 const VISIT_STATUS_OPTIONS = [
     { value: 'Scheduled', label: 'Scheduled', icon: 'fa-regular fa-calendar-days' },
@@ -60,11 +63,90 @@ frappe.views.calendar["Patient Appointment"] = {
         unavailableByResourceDate: {},
         resourceMode: 'doctors',
         resourceFilters: {
-            doctors: { showAll: false },
+            doctors: { showAll: true },
             rooms: { showAll: true }
         },
         isDatepickerSyncing: false,
         isPointerDown: false
+    },
+
+    // Save filter state to localStorage
+    saveFiltersToStorage: function() {
+        const filterState = {
+            resourceMode: this.state.resourceMode,
+            showcancelled: this.state.showcancelled,
+            resourceFilters: this.state.resourceFilters
+        };
+        try {
+            localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filterState));
+        } catch (e) {
+            console.warn('Failed to save filter state to localStorage:', e);
+        }
+    },
+
+    // Load filter state from localStorage
+    loadFiltersFromStorage: function() {
+        try {
+            const stored = localStorage.getItem(FILTER_STORAGE_KEY);
+            if (stored) {
+                const filterState = JSON.parse(stored);
+                if (filterState.resourceMode) {
+                    this.state.resourceMode = filterState.resourceMode;
+                }
+                if (typeof filterState.showcancelled === 'boolean') {
+                    this.state.showcancelled = filterState.showcancelled;
+                }
+                if (filterState.resourceFilters) {
+                    this.state.resourceFilters = Object.assign({}, this.state.resourceFilters, filterState.resourceFilters);
+                }
+                return true;
+            } else {
+                // No saved filters, apply defaults
+                this.state.resourceMode = 'doctors';
+                this.state.showcancelled = false;
+                this.state.resourceFilters = {
+                    doctors: { showAll: true },
+                    rooms: { showAll: true }
+                };
+                return false;
+            }
+        } catch (e) {
+            console.warn('Failed to load filter state from localStorage:', e);
+            // On error, apply defaults
+            this.state.resourceMode = 'doctors';
+            this.state.showcancelled = false;
+            this.state.resourceFilters = {
+                doctors: { showAll: true },
+                rooms: { showAll: true }
+            };
+        }
+        return false;
+    },
+
+    // Clear filters and restore defaults
+    clearFilters: function() {
+        this.state.resourceMode = 'doctors';
+        this.state.showcancelled = false;
+        this.state.resourceFilters = {
+            doctors: { showAll: true },
+            rooms: { showAll: true }
+        };
+        try {
+            localStorage.removeItem(FILTER_STORAGE_KEY);
+        } catch (e) {
+            console.warn('Failed to clear filter state from localStorage:', e);
+        }
+        
+        // Refresh calendar
+        const calendar = cur_list?.calendar?.fullCalendar;
+        if (calendar) {
+            calendar.refetchResources();
+            calendar.refetchEvents();
+        }
+        this.updateResourceModeButtons(this.state.resourceMode);
+        this.updateCancelledButtonLabel();
+        this.updateClearFiltersButton();
+        frappe.show_alert({ message: __('Filters cleared'), indicator: 'blue' });
     },
 
     // Get CSS class names based on status
@@ -175,7 +257,7 @@ frappe.views.calendar["Patient Appointment"] = {
         headerToolbar: {
             left: "jumpToNow searchAppointments",
             center: "title",
-            right: "doctors rooms cancelled toggleSide"
+            right: "doctors rooms cancelled clearFilters toggleSide"
         },
 
         titleFormat: {
@@ -324,6 +406,8 @@ frappe.views.calendar["Patient Appointment"] = {
                     cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
 
                     calendarView.updateCancelledButtonLabel();
+                    calendarView.updateClearFiltersButton();
+                    calendarView.saveFiltersToStorage();
                 }
             },
             toggleSide: {
@@ -342,6 +426,13 @@ frappe.views.calendar["Patient Appointment"] = {
                 text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].showSearchDialog();
+                }
+            },
+            clearFilters: {
+                text: '',
+                hint: __('Clear all filters'),
+                click: function () {
+                    frappe.views.calendar["Patient Appointment"].clearFilters();
                 }
             }
         },
@@ -472,6 +563,16 @@ frappe.views.calendar["Patient Appointment"] = {
 
             // Update current view state
             const calendarView = frappe.views.calendar["Patient Appointment"];
+            
+            // Load filters from localStorage on first render
+            if (!calendarView.state._filtersLoaded) {
+                calendarView.loadFiltersFromStorage();
+                calendarView.state._filtersLoaded = true;
+                
+                // Apply the loaded (or default) resource mode
+                calendarView.applyResourceFilterMode(calendarView.state.resourceMode);
+            }
+            
             calendarView.state.currentView = info.view.type;
             calendarView.state.lastViewInfo = info;
             calendarView.updateResourceModeButtons(calendarView.state.resourceMode);
@@ -856,6 +957,8 @@ frappe.views.calendar["Patient Appointment"] = {
 
         this.applyResourceFilterMode(normalized);
         this.updateResourceAreaHeader();
+        this.updateClearFiltersButton();
+        this.saveFiltersToStorage();
     },
 
     handleResourceButtonClick: function (mode) {
@@ -868,6 +971,8 @@ frappe.views.calendar["Patient Appointment"] = {
         if (mode !== 'rooms')
             this.state.resourceFilters[normalized].showAll = !this.state.resourceFilters[normalized].showAll;
         this.applyResourceFilterMode(normalized, { rerender: true });
+        this.updateClearFiltersButton();
+        this.saveFiltersToStorage();
     },
 
     applyResourceFilterMode: function (mode, opts) {
@@ -921,10 +1026,38 @@ frappe.views.calendar["Patient Appointment"] = {
         this.updateToolbarButtonLabel('.fc-cancelled-button', label);
     },
 
+    isFiltersAtDefault: function() {
+        return this.state.resourceMode === 'doctors' && 
+               !this.state.showcancelled && 
+               this.state.resourceFilters.doctors.showAll;
+    },
+
     updateStaticButtonLabels: function () {
         this.updateToolbarButtonLabel('.fc-toggleSide-button', '☰');
         this.updateToolbarButtonLabel('.fc-jumpToNow-button', '⏰ Now');
         this.updateToolbarButtonLabel('.fc-searchAppointments-button', '🔍 Search');
+        this.updateClearFiltersButton();
+    },
+
+    updateClearFiltersButton: function() {
+        const $clearBtn = $('.fc-clearFilters-button');
+        if (!$clearBtn.length) return;
+        
+        const isDefault = this.isFiltersAtDefault();
+        $clearBtn.empty();
+        $clearBtn.append(frappe.utils.icon('filter-x', 'sm'));
+        
+        if (!isDefault) {
+            // Add text when filters are not at default
+            $clearBtn.prop('disabled', false);
+            $clearBtn.removeClass('fc-button-disabled');
+        } else {
+            // Disable button when filters are at default
+            $clearBtn.prop('disabled', true);
+            $clearBtn.addClass('fc-button-disabled');
+        }
+        
+        $clearBtn.attr('title', __('Clear filters'));
     },
 
     updateResourceModeButtons: function (activeMode) {
