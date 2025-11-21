@@ -510,8 +510,8 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 }
 
 .do-health-footer-btn {
-    background: rgba(15, 23, 42, 0.02);
-    color: var(--do-health-text);
+    /* background: rgba(15, 23, 42, 0.02);
+    color: var(--do-health-text); */
 
     border-radius: 10px;
     padding: 0.45rem 0.5rem;

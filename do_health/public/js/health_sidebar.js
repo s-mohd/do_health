@@ -539,36 +539,41 @@
         const $actions = $("<div>", { class: "do-health-selected-actions" });
         renderPatientActions(patient, $actions);
 
-        const $footer = $("<div>", { class: "do-health-selected-footer" }).append(
-            $("<button>", {
-                class: "do-health-footer-btn primary",
+        const $footer = $("<div>", { class: "do-health-selected-footer" });
+        const footerItems = SIDEBAR_CONFIG.patient_actions.filter(item => !!item.is_footer_action) || [];
+        footerItems.forEach((item) => {
+            let $action = $("<button>", {
+                class: `do-health-footer-btn ${item.label == 'Encounter' ? 'btn-success' : item.label == 'Procedure' ? 'btn-warning' : item.label == 'Chart' ? 'btn-info' : ''}`,
                 type: "button",
-                text: translate("Encounter")
-            }).on("click", () => navigateToEncounter(patient)),
-            $("<button>", {
-                class: "do-health-footer-btn",
-                type: "button",
-                text: translate("Procedure")
-            }),
-            // .on("click", () => navigateToEncounter(patient)),
-            $("<button>", {
-                class: "do-health-footer-btn warning",
-                type: "button",
-                text: translate("Chart")
-            }).on("click", () => frappe.set_route("chart")),
-            $("<button>", {
-                class: "do-health-footer-btn ghost",
-                type: "button",
-            }).append($('<i class="fa-regular fa-message-lines fa-lg"></i>'))
-            // .on("click", () => frappe.set_route("Form", "Patient", patient.patient)),
-        );
+                text: translate(item.label)
+            })
+
+            if (item.label == 'Notes') {
+                $action = $("<button>", {
+                    class: "do-health-footer-btn ghost",
+                    type: "button",
+                }).append($('<i class="fa-regular fa-message-lines fa-lg"></i>'))
+            }
+
+            if (item.label == 'Encounter') {
+                $action.on("click", () => navigateToEncounter(patient))
+            }
+            else if (item.label == 'Procedure') {
+                // $action.on("click", () => navigateToEncounter(patient))
+            }
+            else if (item.label == 'Chart') {
+                $action.on("click", () => frappe.set_route("chart"))
+            }
+
+            $footer.append($action);
+        });
 
         $container.append(header, $actions, $footer);
     }
 
     function renderPatientActions(patient, $container) {
         if (!$container?.length) return;
-        const items = SIDEBAR_CONFIG.patient_actions || [];
+        const items = SIDEBAR_CONFIG.patient_actions.filter(item => !item.is_footer_action || item.is_footer_action == 0) || [];
         $container.empty();
 
         if (!items.length) {
