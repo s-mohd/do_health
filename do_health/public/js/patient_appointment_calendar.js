@@ -306,6 +306,13 @@ frappe.views.calendar["Patient Appointment"] = {
 
         resources: function (fetchInfo, successCallback, failureCallback) {
             const calendarView = frappe.views.calendar["Patient Appointment"];
+            
+            // Ensure filters are loaded before determining resource mode
+            if (!calendarView.state._filtersLoaded) {
+                calendarView.loadFiltersFromStorage();
+                calendarView.state._filtersLoaded = true;
+            }
+            
             const mode = calendarView?.state?.resourceMode || 'doctors';
             const cacheKey = mode === 'rooms' ? 'service_unit_resources' : 'practitioner_resources';
             const cacheTime = 5 * 60 * 1000; // 5 minutes cache
@@ -564,13 +571,16 @@ frappe.views.calendar["Patient Appointment"] = {
             // Update current view state
             const calendarView = frappe.views.calendar["Patient Appointment"];
             
-            // Load filters from localStorage on first render
+            // Load filters from localStorage on first render (if not already loaded)
             if (!calendarView.state._filtersLoaded) {
                 calendarView.loadFiltersFromStorage();
                 calendarView.state._filtersLoaded = true;
-                
-                // Apply the loaded (or default) resource mode
+            }
+            
+            // Apply the resource mode filter on first render
+            if (!calendarView.state._filterModeApplied) {
                 calendarView.applyResourceFilterMode(calendarView.state.resourceMode);
+                calendarView.state._filterModeApplied = true;
             }
             
             calendarView.state.currentView = info.view.type;
