@@ -546,6 +546,17 @@
                 text: translate("Encounter")
             }).on("click", () => navigateToEncounter(patient)),
             $("<button>", {
+                class: "do-health-footer-btn",
+                type: "button",
+                text: translate("Procedure")
+            }),
+            // .on("click", () => navigateToEncounter(patient)),
+            $("<button>", {
+                class: "do-health-footer-btn warning",
+                type: "button",
+                text: translate("Chart")
+            }).on("click", () => frappe.set_route("chart")),
+            $("<button>", {
                 class: "do-health-footer-btn ghost",
                 type: "button",
             }).append($('<i class="fa-regular fa-message-lines fa-lg"></i>'))
@@ -836,10 +847,10 @@
         }
 
         frappe.new_doc("Patient Encounter", {
-            patient: patient.patient,
+            // patient: patient.patient,
             appointment: patient.appointment,
-            appointment_type: patient.appointment_type,
-            custom_appointment_category: patient.custom_appointment_category
+            // appointment_type: patient.appointment_type,
+            // custom_appointment_category: patient.custom_appointment_category
         });
     }
 

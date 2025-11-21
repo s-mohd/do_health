@@ -202,9 +202,6 @@ doc_events = {
     'Clinical Procedure':{
         "on_update": "do_health.api.events.clinical_procedure_update",
     },
-    'Service Request':{
-        "on_update": "do_health.api.methods.get_services"
-    },
     'Medication Request':{
         "on_update": "do_health.api.events.medication_request_update",
         "on_submit": "do_health.api.events.medication_request_update"

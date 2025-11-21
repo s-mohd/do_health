@@ -5,59 +5,7 @@ import typing
 import frappe
 from frappe import _
 
-DEFAULT_ITEMS: typing.Final[list[dict[str, typing.Any]]] = [
-	{
-		"section": "Primary Nav",
-		"label": _("Dashboard"),
-		"icon": "es-dashboard",
-		"route_type": "Workspace",
-		"route_value": "health-dashboard",
-		"sequence": 10,
-	},
-	{
-		"section": "Primary Nav",
-		"label": _("Inbox"),
-		"icon": "es-mail",
-		"route_type": "Page",
-		"route_value": "health-inbox",
-		"sequence": 20,
-	},
-	{
-		"section": "Primary Nav",
-		"label": _("Patients"),
-		"icon": "es-users",
-		"route_type": "Workspace",
-		"route_value": "patients",
-		"sequence": 30,
-	},
-	{
-		"section": "Patient Actions",
-		"label": _("Overview"),
-		"icon": "es-layout",
-		"route_type": "Form",
-		"route_value": "Patient",
-		"requires_patient": 1,
-		"sequence": 10,
-	},
-	{
-		"section": "Patient Actions",
-		"label": _("Documents"),
-		"icon": "es-file",
-		"route_type": "Page",
-		"route_value": "patient-documents",
-		"requires_patient": 1,
-		"sequence": 20,
-	},
-	{
-		"section": "Patient Actions",
-		"label": _("Encounter"),
-		"icon": "es-stethoscope",
-		"route_type": "Form",
-		"route_value": "Patient Encounter",
-		"requires_patient": 1,
-		"sequence": 30,
-	},
-]
+DEFAULT_ITEMS: typing.Final[list[dict[str, typing.Any]]] = []
 
 
 def _serialize_item(doc: dict[str, typing.Any]) -> dict[str, typing.Any]:

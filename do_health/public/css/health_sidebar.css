@@ -126,7 +126,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     line-height: 1.2;
 
     color: var(--do-health-text-muted);
-    background: rgba(15, 23, 42, 0.02);
+    background: transparent;
     transition: background 0.25s, color 0.25s;
 }
 
@@ -187,7 +187,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     align-self: center;
 
     position: absolute;
-    right: -14px;
+    right: 2px;
     top: 50%;
     transform: translateY(-50%);
     display: flex;
@@ -200,9 +200,11 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     background: var(--do-health-panel);
     border: 1px solid var(--do-health-border);
     border-radius: 0 35px 35px 0;
-    width: 26px;
+    width: 10px;
     height: 70px;
     color: var(--do-health-text);
+
+    padding: 0;
 }
 
 .do-health-secondary-toggle:hover {
@@ -212,12 +214,14 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 
 .do-health-secondary-toggle .chevron {
     position: relative;
-    width: 9px;
-    height: 9px;
+    width: 6px;
+    height: 6px;
     border-right: 2px solid currentColor;
     border-bottom: 2px solid currentColor;
     transform: rotate(135deg);
     transition: transform 0.25s ease;
+
+    right: -1.5px;
 }
 
 #do-health-appswitcher-overlay {
@@ -242,11 +246,11 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 #do-health-sidebar[data-secondary-collapsed="true"] .do-health-secondary-toggle {
     background: var(--do-health-bg);
     display: flex !important;
-    right: -14px;
 }
 
 #do-health-sidebar[data-secondary-collapsed="true"] .do-health-secondary-toggle .chevron {
     transform: rotate(-45deg);
+    right: 1.5px;
 }
 
 #do-health-sidebar[data-secondary-collapsed="true"] .do-health-sidebar__secondary {
@@ -502,13 +506,13 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     display: flex;
     gap: 0.5rem;
     padding: 0 8px 8px 8px;
+    flex-wrap: wrap;
 }
 
 .do-health-footer-btn {
     background: rgba(15, 23, 42, 0.02);
     color: var(--do-health-text);
 
-    flex: 1;
     border-radius: 10px;
     padding: 0.45rem 0.5rem;
     font-size: 12px;
@@ -516,6 +520,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     border: 1px solid var(--do-health-border);
     cursor: pointer;
     transition: all 0.2s ease;
+    flex-basis: calc(50% - 0.25rem);
 }
 
 .do-health-footer-btn.primary {

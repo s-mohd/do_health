@@ -2,6 +2,7 @@ frappe.provide('do_health.encounter_sidebar');
 
 do_health.encounter_sidebar = {
 	_render_lock: {},
+	PANEL_COLLAPSE_KEY: 'do_health_encounter_panel_collapsed',
 
 	async init(frm) {
 		const doctype = frm.doctype;
@@ -15,44 +16,46 @@ do_health.encounter_sidebar = {
 			this._render_lock = {};
 		}
 
-		// Debounce rendering to prevent race conditions
-		this._render_lock[key] = setTimeout(async () => {
-			const $wrapper = $(frm.$wrapper);
-			$wrapper.find('.offcanvas-wrapper').remove();
+		const $wrapper = $(frm.$wrapper);
+		$wrapper.find('.offcanvas-wrapper').remove();
 
-			if (!frm.doc.patient) return;
-			if (frm._sidebar_initialized) return;
-			frm._sidebar_initialized = true;
+		if (!frm.doc.patient) return;
+		if (frm._sidebar_initialized) return;
+		frm._sidebar_initialized = true;
 
-			frappe.dom.freeze('Loading sidebar...');
-			try {
-				const settings = await frappe.db.get_doc('Do Health Settings');
-				frappe.dom.unfreeze();
-				this.build_sidebar(frm, $wrapper, settings);
-			} catch (e) {
-				frappe.dom.unfreeze();
-				frappe.msgprint(__('Failed to load Do Health Settings: ') + e.message);
-			}
-		}, 200);
+		frappe.dom.freeze('Loading sidebar...');
+		try {
+			const settings = await frappe.db.get_doc('Do Health Settings');
+			frappe.dom.unfreeze();
+			this.build_sidebar(frm, $wrapper, settings);
+		} catch (e) {
+			frappe.dom.unfreeze();
+			frappe.msgprint(__('Failed to load Do Health Settings: ') + e.message);
+		}
+
 	},
 
 	build_sidebar(frm, $wrapper, settings) {
+		const $panel = this.ensure_side_panel(frm, $wrapper);
+		if (!$panel?.length) return;
+		const $layout = $wrapper.find('.encounter-layout');
+		const collapsed = this.read_panel_collapsed();
+		this.apply_panel_state($layout, collapsed);
+
 		const html = `
-            <div class="offcanvas-wrapper">
-                <div class="vertical-tabs-container"></div>
-                <div class="custom-offcanvas">
-                    <div class="offcanvas-overlay"></div>
-                    <div class="offcanvas-sidebar">
-                        <div class="offcanvas-header">
-                            <h5 class="offcanvas-title"></h5>
-                            <button type="button" class="btn-edit btn btn-default icon-btn">Edit</button>
-                            <button type="button" class="btn-close"><i class="fa fa-times"></i></button>
-                        </div>
-                        <div class="offcanvas-body"></div>
+            <div class="encounter-side-wrapper encounter-surface">
+                <div class="encounter-tab-buttons"></div>
+                <div class="encounter-tab-body">
+                    <div class="encounter-tab-header">
+                        <h5 class="encounter-tab-title"></h5>
+                        <button type="button" class="btn-edit btn btn-default btn-sm icon-btn">
+                            <i class="fa fa-edit"></i> ${__('Edit')}
+                        </button>
                     </div>
+                    <div class="encounter-tab-content"></div>
                 </div>
             </div>`;
-		const $offcanvasWrapper = $(html).appendTo($wrapper);
+		const $sideWrapper = $(html).appendTo($panel.empty());
 
 		const tabs = [];
 
@@ -77,8 +80,13 @@ do_health.encounter_sidebar = {
 				icon: 'fa fa-history',
 				layout: settings.patient_history_tab_layout || [],
 				content: async () => {
-					const patient = await frappe.db.get_doc('Patient', frm.doc.patient);
-					return this.render_tab_layout(settings.patient_history_tab_layout, patient);
+					if (frm.doc.patient) {
+						const patient = await frappe.db.get_doc('Patient', frm.doc.patient);
+						return this.render_tab_layout(settings.patient_history_tab_layout, patient);
+					}
+					else {
+						return '';
+					}
 				},
 				doctype: 'Patient'
 			});
@@ -94,28 +102,46 @@ do_health.encounter_sidebar = {
 			});
 		}
 
+		// --- Patient Visits Tab
+		tabs.push({
+			label: 'Patient Visits',
+			icon: 'fa fa-notes-medical',
+			content: () => this.get_patient_visits_content(frm),
+			doctype: 'Patient Encounter'
+		});
+
 		// --- Render tabs
-		const $tabsContainer = $offcanvasWrapper.find('.vertical-tabs-container');
+		const $tabsContainer = $sideWrapper.find('.encounter-tab-buttons');
 		tabs.forEach(tab => {
 			const $tab = $(`
-                <button class="vertical-tab" data-tab="${tab.label}">
+                <button class="encounter-tab-button" data-tab="${tab.label}">
                     ${tab.icon ? `<i class="${tab.icon}"></i>` : tab.svg}
                     <span>${tab.label}</span>
                 </button>`);
 			$tab.appendTo($tabsContainer).on('click', async () => {
 				const content = await tab.content();
-				$offcanvasWrapper.data('active-tab', tab);
-				this.show_offcanvas($offcanvasWrapper, tab.label, content);
+				$panel.data('active-tab', tab);
+				this.show_offcanvas($panel, tab.label, content);
 			});
 		});
 
-		// --- Events
-		$offcanvasWrapper.on('click', '.btn-close, .offcanvas-overlay', () => this.hide_offcanvas($offcanvasWrapper));
-		$offcanvasWrapper.on('keydown', (e) => { if (e.key === 'Escape') this.hide_offcanvas($offcanvasWrapper); });
+		$panel.off('.encounterSide');
+		$panel.closest('.encounter-layout').off('.encounterSide');
+		$panel.on('click.encounterSide', '.patient-visit-card', (event) => {
+			const appointmentName = $(event.currentTarget).data('appointment');
+			if (appointmentName) {
+				this.show_appointment_summary(appointmentName);
+			}
+		});
+		$panel.on('click.encounterSide', '[data-open-patient-visit-list]', (event) => {
+			const patientId = $(event.currentTarget).data('openPatientVisitList');
+			if (patientId) {
+				frappe.set_route('List', 'Patient Appointment', { patient: patientId });
+			}
+		});
 
-		// --- Edit button logic
-		$offcanvasWrapper.on('click', '.btn-edit', async () => {
-			const active = $offcanvasWrapper.data('active-tab');
+		$panel.on('click.encounterSide', '.btn-edit', async () => {
+			const active = $panel.data('active-tab');
 			if (!active) return;
 
 			if (active.doctype === 'Patient') {
@@ -128,7 +154,7 @@ do_health.encounter_sidebar = {
 					frappe.show_alert({ message: __('Patient details updated'), indicator: 'green' });
 					const refreshed = await frappe.db.get_doc('Patient', patient.name);
 					const html = this.render_tab_layout(active.layout, refreshed);
-					this.show_offcanvas($offcanvasWrapper, active.label, html);
+					this.show_offcanvas($panel, active.label, html);
 				});
 			} else if (active.doctype === 'Vital Signs') {
 				const vital = await this.get_or_create_vital_sign(frm);
@@ -140,10 +166,78 @@ do_health.encounter_sidebar = {
 					frappe.show_alert({ message: __('Vital Signs updated'), indicator: 'green' });
 					const refreshed = await frappe.db.get_doc('Vital Signs', vital.name);
 					const html = this.render_tab_layout(active.layout, refreshed);
-					this.show_offcanvas($offcanvasWrapper, active.label, html);
+					this.show_offcanvas($panel, active.label, html);
 				});
 			}
 		});
+
+		const $layoutRef = $panel.closest('.encounter-layout');
+		this.update_toggle_labels(collapsed);
+
+		if (tabs.length) {
+			(async () => {
+				const first = tabs[0];
+				const content = await first.content();
+				$panel.data('active-tab', first);
+				this.show_offcanvas($panel, first.label, content);
+			})();
+		}
+	},
+
+	apply_panel_state($layout, collapsed) {
+		$layout.toggleClass('panel-collapsed', !!collapsed);
+		this.update_toggle_labels(collapsed);
+	},
+
+	update_toggle_labels(collapsed) {
+		const label = collapsed ? __('Show Panel') : __('Hide Panel');
+		const icon = collapsed ? 'fa fa-chevron-left' : 'fa fa-chevron-right';
+		$('.encounter-panel-toggle-banner').html(`<i class="${icon}"></i> ${label}`);
+	},
+
+	read_panel_collapsed() {
+		try {
+			return localStorage.getItem(this.PANEL_COLLAPSE_KEY) === '1';
+		} catch (_) {
+			return false;
+		}
+	},
+
+	is_past_visit(tab) {
+		try {
+			if (tab?.doctype === 'Patient Encounter') return true; // past visits in the sidebar
+		} catch (_) {
+			return false;
+		}
+		return false;
+	},
+
+	persist_panel_collapsed(collapsed) {
+		try {
+			localStorage.setItem(this.PANEL_COLLAPSE_KEY, collapsed ? '1' : '0');
+		} catch (_) {
+			/* ignore */
+		}
+	},
+
+	ensure_side_panel(frm) {
+		const $wrapper = $(frm.$wrapper);
+		let $layout = $wrapper.find('.encounter-layout');
+		const $layoutMain = $wrapper.find('.layout-main-section');
+		if (!$layout.length && $layoutMain.length) {
+			if (!$layoutMain.parent().hasClass('encounter-form-area')) {
+				$layoutMain.wrap('<div class="encounter-form-area"></div>');
+			}
+			const $formArea = $layoutMain.parent();
+			$formArea.wrap('<div class="encounter-layout"></div>');
+			$layout = $wrapper.find('.encounter-layout');
+		}
+		if (!$layout.length) return null;
+		let $panel = $layout.find('.encounter-side-panel');
+		if (!$panel.length) {
+			$panel = $('<div class="encounter-side-panel"></div>').appendTo($layout);
+		}
+		return $panel;
 	},
 
 	async get_meta_safe(doctype) {
@@ -264,6 +358,733 @@ do_health.encounter_sidebar = {
 		return html || `<div class="p-3 text-center text-muted">No data available</div>`;
 	},
 
+	async get_patient_visits_content(frm) {
+		const visits = await this.fetch_patient_visits(frm.doc.patient);
+		return this.render_patient_visits(visits, frm.doc.patient);
+	},
+
+	async fetch_patient_visits(patient) {
+		if (!patient) return [];
+		const filters = {
+			patient,
+			docstatus: ['<', 2]
+		};
+		const today = frappe.datetime?.nowdate ? frappe.datetime.nowdate() : null;
+		if (today) {
+			filters.appointment_date = ['<=', today];
+		}
+		try {
+			const visits = await frappe.db.get_list('Patient Appointment', {
+				filters,
+				fields: [
+					'name',
+					'appointment_date',
+					'appointment_time',
+					'practitioner',
+					'practitioner_name',
+					'status',
+					'custom_visit_status',
+					'custom_visit_reason',
+					'notes',
+					'appointment_type',
+					'custom_appointment_category',
+					'department',
+					'duration'
+				],
+				limit: 15,
+				order_by: 'appointment_date desc, appointment_time desc'
+			});
+			return visits || [];
+		} catch (error) {
+			console.error('[do_health] Failed to fetch patient appointments', error);
+			return [];
+		}
+	},
+
+	render_patient_visits(visits = [], patientId = null) {
+		if (!visits.length) {
+			const linkBtn = patientId ?
+				`<button type="button" class="btn btn-sm btn-default" data-open-patient-visit-list="${this.escape_html(patientId)}">
+				<i class="fa-regular fa-arrow-up-right-from-square"></i>
+			</button>`
+				: '';
+			return `
+				<div class="patient-visits-tab">
+					<div class="patient-visits-empty">
+						<div class="patient-visits-title">${__('No past visits yet')}</div>
+						<p>${__('Schedule and complete appointments to build the visit history.')}</p>
+						${linkBtn}
+					</div>
+				</div>`;
+		}
+
+		const cards = visits.map((visit) => {
+			const visitDate = visit.appointment_date
+				? frappe.datetime.str_to_user(visit.appointment_date)
+				: __('Not set');
+			const visitTime = visit.appointment_time
+				? visit.appointment_time.split(':')[0] + ':' + visit.appointment_time.split(':')[1]
+				: '';
+			const practitioner = visit.practitioner_name || visit.practitioner || '';
+			const summary = visit.custom_visit_reason || visit.notes || '';
+			const badge = visit.custom_visit_status || visit.status || '';
+			const chips = [];
+			if (visit.appointment_type) chips.push(visit.appointment_type);
+			if (visit.custom_appointment_category) chips.push(visit.custom_appointment_category);
+			if (visit.medical_department) chips.push(visit.medical_department);
+
+			return `
+			<button type="button" class="patient-visit-card" data-appointment="${this.escape_html(visit.name)}">
+				<div class="patient-visit-card__top">
+					<div>
+						<div class="patient-visit-card__title">${visitDate}${visitTime ? ` · ${visitTime}` : ''}</div>
+						<div class="patient-visit-card__meta">
+							${practitioner ? `<span><i class="fa fa-user-md"></i> ${this.escape_html(practitioner)}</span>` : ''}
+						</div>
+						${chips.length ? `<div class="patient-visit-card__chips">${chips.map(chip => `<span class="patient-visit-card__chip">${this.escape_html(chip)}</span>`).join('')}</div>` : ''}
+					</div>
+					${badge ? `<span class="patient-visit-card__status">${this.escape_html(badge)}</span>` : ''}
+				</div>
+				<div class="patient-visit-card__body">
+					${summary ? `<p>${this.escape_html(this.truncate_text(summary, 220))}</p>` : ''}
+				</div>
+			</button>`;
+		}).join('');
+
+		const header = `
+			<div class="patient-visits-header">
+				<div>
+					<div class="patient-visits-title">${__('Past Visits')}</div>
+					<div class="patient-visits-subtitle">${__('Showing {0} recent visits', [visits.length])}</div>
+				</div>
+				${patientId ? `
+					<button type="button" class="btn btn-sm btn-default" data-open-patient-visit-list="${this.escape_html(patientId)}">
+						<i class="fa-regular fa-arrow-up-right-from-square"></i>
+					</button>` : ''
+			}
+			</div>`;
+
+		return `
+			<div class="patient-visits-tab">
+				${header}
+				<div class="patient-visits-list-container">
+					<div class="patient-visits-list">
+						${cards}
+					</div>
+				</div>
+			</div>`;
+	},
+
+	truncate_text(text, limit = 180) {
+		if (!text) return '';
+		const trimmed = text.toString().trim();
+		if (trimmed.length <= limit) return trimmed;
+		return `${trimmed.slice(0, limit)}…`;
+	},
+
+	escape_html(value) {
+		if (value === undefined || value === null) return '';
+		if (frappe.utils?.escape_html) {
+			return frappe.utils.escape_html(String(value));
+		}
+		return String(value)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	},
+
+	async show_appointment_summary(appointmentName) {
+		if (!appointmentName) return;
+		try {
+			const response = await frappe.call({
+				method: 'do_health.api.methods.get_appointment_visit_summary',
+				args: { appointment: appointmentName }
+			});
+			const summary = response.message;
+			if (!summary) {
+				frappe.msgprint(__('Visit not found'));
+				return;
+			}
+			const title = this.get_visit_dialog_title(summary) || __('Patient Visit');
+			const dialog = new frappe.ui.Dialog({
+				title,
+				size: 'large',
+				fields: [{ fieldtype: 'HTML', fieldname: 'visit_summary' }]
+			});
+			dialog.fields_dict.visit_summary.$wrapper.html(this.build_visit_dialog_content(summary));
+			dialog.show();
+		} catch (error) {
+			console.error('[do_health] Failed to load visit summary', error);
+			frappe.msgprint(__('Unable to load visit. Please try again.'));
+		}
+	},
+
+	get_visit_dialog_title(summary) {
+		const appt = summary?.appointment || {};
+		const parts = [];
+		if (appt.appointment_date) {
+			parts.push(frappe.datetime.str_to_user(appt.appointment_date));
+		}
+		if (appt.appointment_time) {
+			parts.push(appt.appointment_time.split(':')[0] + ':' + appt.appointment_time.split(':')[1]);
+		}
+		const label = __('Visit');
+		return parts.length ? `${label}: ${parts.join(' · ')}` : `${label} ${appt.name || ''}`.trim();
+	},
+
+	build_visit_dialog_content(summary) {
+		const header = this.render_visit_header(summary.appointment);
+		const procedures = this.render_visit_procedures(summary);
+		const encounter = this.render_visit_encounter(summary);
+		const vitals = this.render_visit_vitals(summary);
+		const sections = [];
+		sections.push(this.build_visit_section(__('Procedures'), procedures, true));
+		sections.push(this.build_visit_section(__('Encounter'), encounter));
+		sections.push(this.build_visit_section(__('Vital Signs'), vitals));
+		return `
+			<div class="visit-summary">
+				${header}
+				<div class="visit-summary__sections">
+					${sections.join('')}
+				</div>
+			</div>`;
+	},
+
+	render_visit_header(appointment = {}) {
+		if (!appointment || !appointment.name) return '';
+		const slot = [];
+		if (appointment.appointment_date) slot.push(frappe.datetime.str_to_user(appointment.appointment_date));
+		if (appointment.appointment_time) slot.push(appointment.appointment_time.split(':')[0] + ':' + appointment.appointment_time.split(':')[1]);
+		if (appointment.duration) slot.push(`${appointment.duration} ${__('mins')}`);
+		const details = [appointment.practitioner_name || appointment.practitioner, appointment.medical_department, appointment.service_unit]
+			.filter(Boolean)
+			.map(value => `<span>${this.escape_html(value)}</span>`)
+			.join(' · ');
+		const chips = [];
+		if (appointment.status) chips.push(appointment.status);
+		if (appointment.custom_visit_status && appointment.custom_visit_status !== appointment.status) chips.push(appointment.custom_visit_status);
+		if (appointment.appointment_type) chips.push(appointment.appointment_type);
+		if (appointment.custom_appointment_category) chips.push(appointment.custom_appointment_category);
+		return `
+			<div class="visit-summary__header">
+				<div>
+					<div class="visit-summary__title">${this.escape_html(appointment.name)}</div>
+					${slot.length ? `<div class="visit-summary__slot">${this.escape_html(slot.join(' · '))}</div>` : ''}
+					${details ? `<div class="visit-summary__meta">${details}</div>` : ''}
+				</div>
+				${chips.length ? `<div class="visit-summary__chips">${chips.map(chip => this.render_chip(chip)).join('')}</div>` : ''}
+				${appointment.custom_visit_reason ? `<div class="visit-summary__reason"><strong>${__('Reason')}:</strong> ${this.escape_html(appointment.custom_visit_reason)}</div>` : ''}
+				${appointment.notes ? `<div class="visit-summary__notes">${this.format_text_block(appointment.notes)}</div>` : ''}
+			</div>`;
+	},
+
+	build_visit_section(title, body, expanded = false) {
+		const safeBody = body && body.trim() ? body : `<div class="visit-empty">${__('No data recorded for this section.')}</div>`;
+		return `
+			<div class="visit-section ${expanded ? 'is-open' : ''}">
+				<button type="button" class="visit-section__header">
+					<span>${title}</span>
+					<i class="fa fa-chevron-down"></i>
+				</button>
+				<div class="visit-section__body">${safeBody}</div>
+			</div>`;
+	},
+
+	render_visit_procedures(summary) {
+		const clusters = [];
+		const prescriptions = this.render_order_group(__('Prescriptions'), summary.procedures || [], row => this.render_procedure_card(row));
+		if (prescriptions) clusters.push(prescriptions);
+		const clinical = this.render_order_group(__('Completed Procedures'), summary.clinical_procedures || [], row => this.render_clinical_procedure_card(row));
+		if (clinical) clusters.push(clinical);
+		return clusters.join('');
+	},
+
+	render_visit_encounter(summary) {
+		if (summary.encounter_summary) {
+			return this.build_encounter_summary_html(summary.encounter_summary, summary.encounter_name);
+		}
+		return `<div class="visit-empty">${__('No encounter has been submitted for this appointment yet.')}</div>`;
+	},
+
+	render_visit_vitals(summary) {
+		const html = this.render_vitals_section(summary.vitals || [], '');
+		return html || `<div class="visit-empty">${__('No vital signs recorded for this visit.')}</div>`;
+	},
+
+	async show_encounter_summary(encounterName, opts = {}) {
+		if (!encounterName) return;
+		try {
+			const response = await frappe.call({
+				method: 'do_health.api.methods.get_encounter_summary',
+				args: { encounter: encounterName }
+			});
+			const summary = response.message;
+			if (!summary) {
+				frappe.msgprint(__('Encounter not found'));
+				return;
+			}
+			const dialog = new frappe.ui.Dialog({
+				title: opts.title || `Encounter: ${summary.encounter?.name || encounterName}`,
+				size: 'large',
+				fields: [{ fieldtype: 'HTML', fieldname: 'encounter_details' }]
+			});
+			dialog.fields_dict.encounter_details.$wrapper.html(this.build_encounter_summary_html(summary, encounterName));
+			dialog.show();
+		} catch (error) {
+			console.error('[do_health] Failed to load encounter summary', error);
+			frappe.msgprint(__('Unable to load encounter. Please try again.'));
+		}
+	},
+
+	build_encounter_summary_html(summary, fallbackName) {
+		if (!summary || !summary.encounter) {
+			return `<div class="p-4 text-muted text-center">${__('No encounter data available')}</div>`;
+		}
+		const encounter = summary.encounter;
+		const stats = this.render_summary_stats([
+			{ label: __('Encounter Date'), value: encounter.encounter_date_label },
+			{ label: __('Encounter Time'), value: encounter.encounter_time_label },
+			{ label: __('Practitioner'), value: encounter.practitioner_name || encounter.practitioner },
+			{ label: __('Department'), value: encounter.medical_department },
+			{ label: __('Status'), value: encounter.status },
+			{ label: __('Appointment Type'), value: encounter.appointment_type },
+			{ label: __('Appointment Category'), value: encounter.appointment_category },
+			{ label: __('Source'), value: encounter.source }
+		]);
+
+		const sections = [];
+		if (stats) sections.push(stats);
+		if (summary.appointment) sections.push(this.render_appointment_card(summary.appointment));
+		if ((summary.vitals || []).length) sections.push(this.render_vitals_section(summary.vitals));
+		const symptomsSection = this.render_symptoms_section(summary);
+		if (symptomsSection) sections.push(symptomsSection);
+		const diagnosisSection = this.render_diagnosis_section(summary);
+		if (diagnosisSection) sections.push(diagnosisSection);
+		const ordersSection = this.render_orders_section(summary);
+		if (ordersSection) sections.push(ordersSection);
+		const notesSection = this.render_notes_section(summary.notes);
+		if (notesSection) sections.push(notesSection);
+		const supporting = this.render_supporting_files(summary.attachments, summary.annotations);
+		if (supporting) sections.push(supporting);
+
+		const encounterName = encounter.name || fallbackName;
+		const footer = `
+			<div class="encounter-summary__footer">
+				<button class="btn btn-primary btn-sm" onclick="frappe.set_route('Form', 'Patient Encounter', '${this.escape_html(encounterName)}'); cur_dialog.hide();">
+					<i class="fa fa-external-link-alt"></i> ${__('Open Full Encounter')}
+				</button>
+			</div>`;
+
+		return `<div class="encounter-summary">${sections.join('')}${footer}</div>`;
+	},
+
+	render_summary_stats(items = []) {
+		const cards = items
+			.filter(item => item && item.value)
+			.map(item => {
+				const value = this.escape_html(item.value);
+				return `
+					<div class="encounter-stat-card">
+						<div class="encounter-summary__label">${item.label}</div>
+						<div class="encounter-summary__value">${value}</div>
+					</div>`;
+			})
+			.join('');
+		return cards ? `<div class="encounter-summary__grid">${cards}</div>` : '';
+	},
+
+	render_section(title, body, subtitle = '') {
+		if (!body) return '';
+		return `
+			<div class="encounter-section">
+				<div class="encounter-section__title">${title}</div>
+				${subtitle ? `<div class="encounter-section__subtitle">${subtitle}</div>` : ''}
+				${body}
+			</div>`;
+	},
+
+	render_appointment_card(appointment) {
+		const chips = [];
+		if (appointment.status) chips.push(`${__('Status')}: ${appointment.status}`);
+		if (appointment.custom_visit_status) chips.push(`${__('Visit Status')}: ${appointment.custom_visit_status}`);
+		if (appointment.custom_appointment_category) chips.push(`${__('Category')}: ${appointment.custom_appointment_category}`);
+		const slotParts = [];
+		if (appointment.appointment_date_label) slotParts.push(appointment.appointment_date_label);
+		if (appointment.appointment_time_label) slotParts.push(appointment.appointment_time_label);
+		if (appointment.duration) slotParts.push(`${appointment.duration} ${__('mins')}`);
+		const reason = appointment.custom_visit_reason
+			? `<div class="encounter-note"><strong>${__('Reason')}:</strong> ${this.escape_html(appointment.custom_visit_reason)}</div>`
+			: '';
+		const notes = appointment.notes
+			? `<div class="encounter-note">${this.format_text_block(appointment.notes)}</div>`
+			: '';
+		const meta = [
+			appointment.practitioner_name || appointment.practitioner,
+			appointment.medical_department,
+			appointment.service_unit
+		].filter(Boolean).map(value => `<span>${this.escape_html(value)}</span>`).join(' · ');
+
+		const body = `
+			<div class="encounter-card">
+				<div class="encounter-card__title">${__('Patient Appointment')}</div>
+				${slotParts.length ? `<div class="encounter-card__meta">${this.escape_html(slotParts.join(' · '))}</div>` : ''}
+				${meta ? `<div class="encounter-card__meta encounter-card__meta--muted">${meta}</div>` : ''}
+				${chips.length ? `<div class="encounter-order-card__chips">${chips.map(chip => this.render_chip(chip)).join('')}</div>` : ''}
+				${reason}
+				${notes}
+			</div>`;
+
+		return this.render_section(__('Patient Appointment'), body);
+	},
+
+	render_vitals_section(records = [], heading = __('Vital Signs')) {
+		if (!records.length) return '';
+		const cards = records.map(record => {
+			const when = [record.signs_date_label, record.signs_time_label]
+				.filter(Boolean)
+				.join(' • ');
+			const chips = Object.entries(record.readings || {}).map(([field, value]) => {
+				const meta = this.get_vital_meta(field, value, record);
+				return meta ? this.render_chip(meta) : '';
+			}).join('');
+			const noteBlocks = [];
+			if (record.vital_signs_note) {
+				noteBlocks.push(`<div class="encounter-note">${this.format_text_block(record.vital_signs_note)}</div>`);
+			}
+			if (record.nutrition_note) {
+				noteBlocks.push(`<div class="encounter-note">${this.format_text_block(record.nutrition_note)}</div>`);
+			}
+			return `
+				<div class="encounter-vitals__card">
+					<div class="encounter-vitals__header">
+						<div>${when || __('Not recorded')}</div>
+						${record.name ? `<small>${this.escape_html(record.name)}</small>` : ''}
+					</div>
+					${chips ? `<div class="encounter-vitals__chips">${chips}</div>` : ''}
+					${noteBlocks.join('')}
+				</div>`;
+		}).join('');
+		const body = `<div class="encounter-vitals">${cards}</div>`;
+		return heading
+			? this.render_section(heading, body)
+			: body;
+	},
+
+	get_vital_meta(field, value, record) {
+		if (value === undefined || value === null || value === '') return null;
+		const labels = {
+			temperature: { label: __('Temperature'), suffix: '°C' },
+			pulse: { label: __('Pulse'), suffix: __('bpm') },
+			respiratory_rate: { label: __('Respiratory Rate'), suffix: __('breaths/min') },
+			bp_systolic: { label: __('Systolic'), suffix: __('mmHg') },
+			bp_diastolic: { label: __('Diastolic'), suffix: __('mmHg') },
+			bp: { label: __('Blood Pressure') },
+			weight: { label: __('Weight'), suffix: __('kg') },
+			height: { label: __('Height'), suffix: __('cm') },
+			bmi: { label: __('BMI') }
+		};
+		const readings = (record && record.readings) || {};
+		let label = (labels[field] && labels[field].label) || (frappe.model?.unscrub ? frappe.model.unscrub(field) : field);
+		let suffix = (labels[field] && labels[field].suffix) || '';
+		let output = value;
+		if (field === 'bp_systolic' && readings.bp_diastolic && !readings.bp) {
+			label = __('Blood Pressure');
+			output = `${value}/${readings.bp_diastolic}`;
+			suffix = __('mmHg');
+		}
+		return `${label}: ${this.escape_html(output)}${suffix ? ` ${suffix}` : ''}`;
+	},
+
+	render_symptoms_section(summary) {
+		const notes = summary.notes || {};
+		const items = (summary.symptoms || []).map(row => `<li>${this.escape_html(row.complaint)}</li>`).join('');
+		const blocks = [];
+		if (items) {
+			blocks.push(`<ul class="encounter-list">${items}</ul>`);
+		}
+		if (notes.symptom_duration) {
+			blocks.push(`<div class="encounter-note"><strong>${__('Duration')}:</strong> ${this.escape_html(notes.symptom_duration)}</div>`);
+		}
+		if (notes.symptoms_notes) {
+			blocks.push(`<div class="encounter-note">${this.format_text_block(notes.symptoms_notes)}</div>`);
+		}
+		return blocks.length ? this.render_section(__('Symptoms & History'), blocks.join('')) : '';
+	},
+
+	render_diagnosis_section(summary) {
+		const parts = [];
+		const diagnosisList = (summary.diagnoses || []).map(row => `<li>${this.escape_html(row.diagnosis)}</li>`).join('');
+		if (diagnosisList) {
+			parts.push(`
+				<div class="encounter-sublist">
+					<div class="encounter-section__subtitle">${__('Primary Diagnosis')}</div>
+					<ul class="encounter-list">${diagnosisList}</ul>
+				</div>`);
+		}
+		const diffList = (summary.differential_diagnosis || []).map(row => `<li>${this.escape_html(row.diagnosis)}</li>`).join('');
+		if (diffList) {
+			parts.push(`
+				<div class="encounter-sublist">
+					<div class="encounter-section__subtitle">${__('Differential')}</div>
+					<ul class="encounter-list">${diffList}</ul>
+				</div>`);
+		}
+		if ((summary.codification || []).length) {
+			const rows = summary.codification
+				.map(row => `<li>${this.escape_html(row.code_value || row.code || '')}${row.display ? ` — ${this.escape_html(row.display)}` : ''}</li>`)
+				.join('');
+			parts.push(`
+				<div class="encounter-sublist">
+					<div class="encounter-section__subtitle">${__('Coding')}</div>
+					<ul class="encounter-list">${rows}</ul>
+				</div>`);
+		}
+		return parts.length ? this.render_section(__('Diagnoses & Coding'), parts.join('')) : '';
+	},
+
+	render_orders_section(summary) {
+		const clusters = [];
+		clusters.push(this.render_order_group(__('Medication Prescriptions'), summary.drug_prescriptions, row => this.render_medication_card(row)));
+		clusters.push(this.render_order_group(__('Lab Tests'), summary.lab_prescriptions, row => this.render_lab_card(row)));
+		clusters.push(this.render_order_group(__('Procedure Prescriptions'), summary.procedure_prescriptions, row => this.render_procedure_card(row)));
+		clusters.push(this.render_order_group(__('Therapies'), summary.therapies, row => this.render_therapy_card(row)));
+		clusters.push(this.render_order_group(__('Service Requests'), summary.service_requests, row => this.render_service_request_card(row)));
+		clusters.push(this.render_order_group(__('Medication Requests'), summary.medication_requests, row => this.render_medication_request_card(row)));
+		clusters.push(this.render_order_group(__('Completed Procedures'), summary.clinical_procedures, row => this.render_clinical_procedure_card(row)));
+		const body = clusters.filter(Boolean).join('');
+		return body ? this.render_section(__('Orders & Prescriptions'), body) : '';
+	},
+
+	render_order_group(title, items = [], renderer) {
+		if (!items.length || typeof renderer !== 'function') return '';
+		const cards = items.map(item => renderer.call(this, item)).filter(Boolean).join('');
+		if (!cards) return '';
+		return `
+			<div class="encounter-order-cluster">
+				<div class="encounter-section__subtitle">${title}</div>
+				<div class="encounter-order-group">${cards}</div>
+			</div>`;
+	},
+
+	render_medication_card(row) {
+		const title = row.drug_name || row.drug_code || row.medication || __('Medication');
+		const chips = [];
+		if (row.dosage) chips.push(`${__('Dosage')}: ${row.dosage}`);
+		if (row.dosage_form) chips.push(`${__('Form')}: ${row.dosage_form}`);
+		if (row.period) chips.push(`${__('Period')}: ${row.period}`);
+		if (row.interval && row.interval_uom) chips.push(`${__('Interval')}: ${row.interval} ${row.interval_uom}`);
+		if (row.number_of_repeats_allowed) chips.push(`${__('Repeats')}: ${row.number_of_repeats_allowed}`);
+		const lines = [];
+		if (row.comment) lines.push(row.comment);
+		if (row.medication_request) lines.push(`${__('Request')}: ${row.medication_request}`);
+		return this.render_order_card(title, { chips, lines });
+	},
+
+	render_lab_card(row) {
+		const title = row.lab_test_name || row.lab_test_code || __('Lab Test');
+		const chips = [];
+		if (row.intent) chips.push(`${__('Intent')}: ${row.intent}`);
+		if (row.priority) chips.push(`${__('Priority')}: ${row.priority}`);
+		if (row.patient_care_type) chips.push(`${__('Care Type')}: ${row.patient_care_type}`);
+		const lines = [];
+		if (row.lab_test_comment) lines.push(row.lab_test_comment);
+		if (row.observation_template) lines.push(`${__('Template')}: ${row.observation_template}`);
+		if (row.service_request) lines.push(`${__('Service Request')}: ${row.service_request}`);
+		return this.render_order_card(title, { chips, lines });
+	},
+
+	render_procedure_card(row) {
+		const title = row.procedure_name || row.procedure || __('Procedure');
+		const chips = [];
+		if (row.intent) chips.push(`${__('Intent')}: ${row.intent}`);
+		if (row.priority) chips.push(`${__('Priority')}: ${row.priority}`);
+		if (row.patient_care_type) chips.push(`${__('Care Type')}: ${row.patient_care_type}`);
+		if (row.date) chips.push(`${__('Planned')}: ${frappe.datetime.str_to_user(row.date)}`);
+		if (row.no_of_sessions) chips.push(`${__('Sessions')}: ${row.no_of_sessions}`);
+		const lines = [];
+		if (row.practitioner) lines.push(`${__('Practitioner')}: ${row.practitioner}`);
+		if (row.department) lines.push(`${__('Department')}: ${row.department}`);
+		if (row.service_request) lines.push(`${__('Service Request')}: ${row.service_request}`);
+		return this.render_order_card(title, { chips, lines });
+	},
+
+	render_therapy_card(row) {
+		const title = row.therapy_type || __('Therapy Plan');
+		const chips = [];
+		if (row.intent) chips.push(`${__('Intent')}: ${row.intent}`);
+		if (row.priority) chips.push(`${__('Priority')}: ${row.priority}`);
+		if (row.no_of_sessions) chips.push(`${__('Sessions')}: ${row.no_of_sessions}`);
+		if (row.sessions_completed) chips.push(`${__('Completed')}: ${row.sessions_completed}`);
+		const lines = [];
+		if (row.patient_care_type) lines.push(`${__('Care Type')}: ${row.patient_care_type}`);
+		if (row.service_request) lines.push(`${__('Service Request')}: ${row.service_request}`);
+		return this.render_order_card(title, { chips, lines });
+	},
+
+	render_service_request_card(row) {
+		const title = row.name || __('Service Request');
+		const chips = [];
+		if (row.status) chips.push(`${__('Status')}: ${row.status}`);
+		if (row.intent) chips.push(`${__('Intent')}: ${row.intent}`);
+		if (row.priority) chips.push(`${__('Priority')}: ${row.priority}`);
+		const lines = [];
+		if (row.order_description) lines.push(row.order_description);
+		if (row.patient_care_type) lines.push(`${__('Care Type')}: ${row.patient_care_type}`);
+		if (row.staff_role) lines.push(`${__('Staff Role')}: ${row.staff_role}`);
+		if (row.expected_date_label) lines.push(`${__('Expected')}: ${row.expected_date_label}`);
+		return this.render_order_card(title, {
+			chips,
+			lines,
+			subtitle: [row.order_date_label, row.order_time_label].filter(Boolean).join(' • ')
+		});
+	},
+
+	render_medication_request_card(row) {
+		const title = row.medication || row.medication_item || row.name;
+		const chips = [];
+		if (row.status) chips.push(`${__('Status')}: ${row.status}`);
+		if (row.intent) chips.push(`${__('Intent')}: ${row.intent}`);
+		if (row.priority) chips.push(`${__('Priority')}: ${row.priority}`);
+		const lines = [];
+		if (row.dosage) lines.push(`${__('Dosage')}: ${row.dosage}`);
+		if (row.dosage_form) lines.push(`${__('Form')}: ${row.dosage_form}`);
+		if (row.quantity) lines.push(`${__('Quantity')}: ${row.quantity}`);
+		if (row.period) lines.push(`${__('Period')}: ${row.period}`);
+		if (row.comment) lines.push(row.comment);
+		if (row.order_description) lines.push(row.order_description);
+		if (row.expected_date_label) lines.push(`${__('Expected')}: ${row.expected_date_label}`);
+		return this.render_order_card(title || __('Medication Request'), {
+			chips,
+			lines,
+			subtitle: [row.order_date_label, row.order_time_label].filter(Boolean).join(' • ')
+		});
+	},
+
+	render_clinical_procedure_card(row) {
+		const title = row.procedure_template || row.name || __('Clinical Procedure');
+		const chips = [];
+		if (row.status) chips.push(`${__('Status')}: ${row.status}`);
+		if (row.service_request) chips.push(`${__('Service Request')}: ${row.service_request}`);
+		const lines = [];
+		if (row.practitioner_name || row.practitioner) lines.push(`${__('Practitioner')}: ${row.practitioner_name || row.practitioner}`);
+		if (row.medical_department) lines.push(`${__('Department')}: ${row.medical_department}`);
+		if (row.custom_pre_operative_diagnosis) lines.push(`${__('Pre-op')} — ${row.custom_pre_operative_diagnosis}`);
+		if (row.custom_post_operative_diagnosis) lines.push(`${__('Post-op')} — ${row.custom_post_operative_diagnosis}`);
+		if (row.notes) lines.push(row.notes);
+		return this.render_order_card(title, {
+			chips,
+			lines,
+			subtitle: [row.start_date_label, row.start_time_label].filter(Boolean).join(' • ')
+		});
+	},
+
+	render_order_card(title, options = {}) {
+		const safeTitle = this.escape_html(title || __('Order'));
+		const chips = (options.chips || [])
+			.filter(Boolean)
+			.map(text => this.render_chip(text))
+			.join('');
+		const lines = (options.lines || [])
+			.filter(Boolean)
+			.map(line => `<li>${this.escape_html(line)}</li>`)
+			.join('');
+		return `
+			<div class="encounter-order-card">
+				<div class="encounter-order-card__title">${safeTitle}</div>
+				${options.subtitle ? `<div class="encounter-order-card__subtitle">${this.escape_html(options.subtitle)}</div>` : ''}
+				${chips ? `<div class="encounter-order-card__chips">${chips}</div>` : ''}
+				${lines ? `<ul class="encounter-bullet-list">${lines}</ul>` : ''}
+			</div>`;
+	},
+
+	render_chip(text) {
+		return `<span class="encounter-pill">${this.escape_html(text)}</span>`;
+	},
+
+	render_notes_section(notes = {}) {
+		const entries = [];
+		if (notes.illness_progression) entries.push({ label: __('Illness Progression'), value: notes.illness_progression });
+		if (notes.physical_examination) entries.push({ label: __('Physical Examination'), value: notes.physical_examination });
+		if (notes.other_examination) entries.push({ label: __('Other Examination'), value: notes.other_examination });
+		if (notes.diagnosis_note) entries.push({ label: __('Diagnosis Notes'), value: notes.diagnosis_note });
+		if (notes.encounter_comment) entries.push({ label: __('Encounter Notes'), value: notes.encounter_comment });
+		if (!entries.length) return '';
+		const body = entries.map(entry => `
+			<div class="encounter-note-block">
+				<div class="encounter-note-block__label">${entry.label}</div>
+				<div class="encounter-note-block__body">${this.format_text_block(entry.value)}</div>
+			</div>`).join('');
+		return this.render_section(__('Clinical Notes'), body);
+	},
+
+	render_supporting_files(attachments = [], annotations = []) {
+		const sections = [];
+		if (attachments.length) {
+			const list = attachments
+				.filter(item => item.attachment)
+				.map(item => {
+					const label = item.attachment_name || item.attachment.split('/').pop();
+					const href = encodeURI(item.attachment);
+					return `<li><a href="${href}" target="_blank" rel="noopener">${this.escape_html(label)}</a></li>`;
+				})
+				.join('');
+			if (list) {
+				sections.push(`
+					<div class="encounter-sublist">
+						<div class="encounter-section__subtitle">${__('Attachments')}</div>
+						<ul class="encounter-list">${list}</ul>
+					</div>`);
+			}
+		}
+		if (annotations.length) {
+			const list = annotations
+				.map(item => {
+					const label = [item.annotation, item.type].filter(Boolean).join(' • ');
+					return `<li>${this.escape_html(label)}</li>`;
+				})
+				.join('');
+			if (list) {
+				sections.push(`
+					<div class="encounter-sublist">
+						<div class="encounter-section__subtitle">${__('Annotations')}</div>
+						<ul class="encounter-list">${list}</ul>
+					</div>`);
+			}
+		}
+		return sections.length ? this.render_section(__('Supporting Files'), sections.join('')) : '';
+	},
+
+	format_text_block(text) {
+		const safe = this.escape_html(text || '');
+		return safe.replace(/\n/g, '<br>');
+	},
+
+	async find_encounter_by_date(patientId, encounterDate) {
+		if (!patientId || !encounterDate) return null;
+		try {
+			const response = await frappe.call({
+				method: 'frappe.client.get_list',
+				args: {
+					doctype: 'Patient Encounter',
+					filters: {
+						patient: patientId,
+						encounter_date: encounterDate,
+						docstatus: 1
+					},
+					fields: ['name'],
+					order_by: 'creation desc',
+					limit: 1
+				}
+			});
+			return response.message?.length ? response.message[0].name : null;
+		} catch (error) {
+			console.error('[do_health] Failed to locate encounter by date', error);
+			return null;
+		}
+	},
+
 	get_color(name) {
 		const map = {
 			'Blue': { bg: '#e1f5fe', border: '#03a9f4' },
@@ -278,21 +1099,17 @@ do_health.encounter_sidebar = {
 	},
 
 	show_offcanvas($wrapper, title, content) {
-		$wrapper.find('.offcanvas-title').text(title);
-		$wrapper.find('.offcanvas-body').html(content);
-		$wrapper.addClass('show');
-		$('body').addClass('offcanvas-open');
-		setTimeout(() => {
-			$wrapper.find(`.vertical-tab[data-tab="${title}"]`).addClass('active').siblings().removeClass('active');
-		}, 50);
+		$wrapper.find('.encounter-tab-title').text(title);
+		$wrapper.find('.encounter-tab-content').html(content);
+		const activeTab = $wrapper.data('active-tab');
+		$wrapper.find('.btn-edit').toggle(!this.is_past_visit(activeTab));
+		$wrapper.find(`.encounter-tab-button[data-tab="${title}"]`).addClass('active').siblings().removeClass('active');
 	},
 
 	hide_offcanvas($wrapper) {
-		$wrapper.removeClass('show');
-		$('body').removeClass('offcanvas-open');
-		setTimeout(() => {
-			$wrapper.find('.vertical-tab').removeClass('active');
-		}, 300);
+		$wrapper.find('.encounter-tab-content').empty();
+		$wrapper.find('.encounter-tab-title').text('');
+		$wrapper.find('.encounter-tab-button').removeClass('active');
 	},
 
 	// --- Dental chart loader
@@ -318,6 +1135,19 @@ do_health.encounter_sidebar = {
 		return $container;
 	}
 };
+
+$(document).on('click', '.visit-section__header', (event) => {
+	const $section = $(event.currentTarget).closest('.visit-section');
+	$section.toggleClass('is-open');
+});
+
+$(document).on('click', '.encounter-panel-toggle-banner', () => {
+	const $layout = $('.encounter-layout').first();
+	if (!$layout.length) return;
+	const nextState = !$layout.hasClass('panel-collapsed');
+	do_health.encounter_sidebar.apply_panel_state($layout, nextState);
+	do_health.encounter_sidebar.persist_panel_collapsed(nextState);
+});
 
 let lastBannerCreatedAt = 0;
 const BANNER_CREATE_COOLDOWN = 800;
@@ -383,12 +1213,11 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 	const topPosition = navbarHeight + pageHeadHeight;
 
 	const $banner = $("<div>", {
-		class: "do-health-patient-banner",
-		style: `background: linear-gradient(to right, #ffffff 0%, #f8f9fa 100%); border-bottom: 2px solid #e3e8ef; padding: 16px 28px; position: sticky; top: ${topPosition}px; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 0; width: 100%;`
-	});
+		class: "do-health-patient-banner encounter-surface"
+	}).css('--patient-banner-top', `${topPosition}px`);
 
 	const $row = $("<div>", {
-		style: "display: flex; align-items: center; gap: 20px;"
+		class: "banner-row"
 	});
 
 	// Avatar with gradient border
@@ -441,9 +1270,18 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 	}
 
 	const $details = $("<div>", {
-		style: "font-size: 13px; line-height: 1.6;",
+		class: "banner-details",
 		html: details.join(" <span style='color: #dee2e6; margin: 0 6px;'>|</span> ")
 	});
+
+	const $actions = $("<div>", { class: "banner-actions" });
+	const isPanelCollapsed = !$('.encounter-layout').first().hasClass('panel-collapsed');
+	const $toggle = $("<button>", {
+		class: "btn btn-default btn-sm encounter-panel-toggle-banner",
+		type: 'button',
+		text: isPanelCollapsed ? __('Show Panel') : __('Hide Panel')
+	});
+	$actions.append($toggle);
 
 	// Add last visit as clickable element
 	if (lastVisit) {
@@ -467,113 +1305,20 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 		$lastVisitValue.on("click", function (e) {
 			e.stopPropagation();
 
-			// Find the encounter with this date
-			frappe.call({
-				method: "frappe.client.get_list",
-				args: {
-					doctype: "Patient Encounter",
-					filters: {
-						patient: patient.name,
-						encounter_date: lastVisit,
-						docstatus: 1
-					},
-					fields: ["name"],
-					order_by: "creation desc",
-					limit: 1
-				},
-				callback: function (r) {
-					if (r.message && r.message.length > 0) {
-						const encounterName = r.message[0].name;
-
-						// Open encounter in a dialog
-						frappe.call({
-							method: "frappe.client.get",
-							args: {
-								doctype: "Patient Encounter",
-								name: encounterName
-							},
-							callback: function (encounterData) {
-								if (encounterData.message) {
-									const encounter = encounterData.message;
-
-									// Create dialog to show encounter details
-									const dialog = new frappe.ui.Dialog({
-										title: `Encounter: ${encounter.name}`,
-										size: 'large',
-										fields: [
-											{
-												fieldtype: 'HTML',
-												fieldname: 'encounter_details'
-											}
-										]
-									});
-
-									// Build encounter details HTML
-									let html = `
-                                            <div style="padding: 16px;">
-                                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-                                                    <div>
-                                                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">Encounter Date</div>
-                                                        <div style="font-size: 14px; font-weight: 600;">${frappe.datetime.str_to_user(encounter.encounter_date)}</div>
-                                                    </div>
-                                                    <div>
-                                                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; font-weight: 600; margin-bottom: 4px;">Practitioner</div>
-                                                        <div style="font-size: 14px; font-weight: 600;">${encounter.practitioner_name || encounter.practitioner || 'N/A'}</div>
-                                                    </div>
-                                                </div>
-                                        `;
-
-									// Add symptoms if available
-									if (encounter.symptoms) {
-										html += `
-                                                <div style="margin-bottom: 20px;">
-                                                    <div style="font-size: 12px; color: #495057; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #e3e8ef;">Symptoms</div>
-                                                    <div style="font-size: 13px; color: #6c757d; white-space: pre-wrap;">${encounter.symptoms}</div>
-                                                </div>
-                                            `;
-									}
-
-									// Add diagnosis if available
-									if (encounter.diagnosis) {
-										html += `
-                                                <div style="margin-bottom: 20px;">
-                                                    <div style="font-size: 12px; color: #495057; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #e3e8ef;">Diagnosis</div>
-                                                    <div style="font-size: 13px; color: #6c757d; white-space: pre-wrap;">${encounter.diagnosis}</div>
-                                                </div>
-                                            `;
-									}
-
-									// Add notes if available
-									if (encounter.encounter_comment) {
-										html += `
-                                                <div style="margin-bottom: 20px;">
-                                                    <div style="font-size: 12px; color: #495057; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #e3e8ef;">Notes</div>
-                                                    <div style="font-size: 13px; color: #6c757d; white-space: pre-wrap;">${encounter.encounter_comment}</div>
-                                                </div>
-                                            `;
-									}
-
-									// Add button to open full encounter
-									html += `
-                                                <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e3e8ef;">
-                                                    <button class="btn btn-primary btn-sm" onclick="frappe.set_route('Form', 'Patient Encounter', '${encounter.name}'); cur_dialog.hide();">
-                                                        <i class="fa fa-external-link-alt"></i> Open Full Encounter
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        `;
-
-									dialog.fields_dict.encounter_details.$wrapper.html(html);
-									dialog.show();
-								}
-							}
-						});
+			do_health.encounter_sidebar.find_encounter_by_date(patient.name, lastVisit)
+				.then(encounterName => {
+					if (encounterName) {
+						do_health.encounter_sidebar.show_encounter_summary(encounterName);
 					} else {
 						frappe.msgprint(__('Encounter not found'));
 					}
-				}
-			});
+				})
+				.catch(error => {
+					console.error('[do_health] Failed to open encounter summary', error);
+					frappe.msgprint(__('Unable to open encounter. Please try again.'));
+				});
 		});
+
 
 		$details.append($lastVisitLabel, $lastVisitValue);
 	}
@@ -599,7 +1344,7 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 
 	if (vitalsList.length > 0) {
 		$vitals = $("<div>", {
-			style: "display: flex; gap: 12px; padding-left: 20px; margin-left: 20px; border-left: 2px solid #e3e8ef;"
+			style: "display: flex; gap: 12px; padding-left: 20px; border-left: 2px solid #e3e8ef;"
 		});
 
 		vitalsList.forEach(v => {
@@ -627,7 +1372,7 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 	} else {
 		// No vitals available - show button to enter them
 		$vitals = $("<div>", {
-			style: "display: flex; align-items: center; padding-left: 20px; margin-left: 20px; border-left: 2px solid #e3e8ef;"
+			style: "display: flex; align-items: center; padding-left: 20px; border-left: 2px solid #e3e8ef;"
 		});
 
 		const $addVitalsBtn = $("<button>", {
@@ -784,7 +1529,7 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 	}
 
 	// Assemble
-	$row.append($avatarWrapper, $info);
+	$row.append($avatarWrapper, $info, $actions);
 	if ($vitals) $row.append($vitals);
 	if ($insurance) $row.append($insurance);
 
@@ -803,56 +1548,55 @@ function renderBanner(patient, appointment, lastVisit, vitals) {
 		}
 	}
 
-	// Adjust form elements to account for sticky banner
-	const bannerHeight = $banner.outerHeight() || 0;
-	const stickyOffset = navbarHeight + pageHeadHeight + bannerHeight;
+	// // Adjust form elements to account for sticky banner
+	// const bannerHeight = $banner.outerHeight() || 0;
+	// const stickyOffset = navbarHeight + pageHeadHeight + bannerHeight;
 
-	// Fix form-message and form-tabs-list sticky positioning
-	setTimeout(() => {
-		const $formMessage = $(".form-message");
-		const $formTabsList = $(".form-tabs-list");
+	// const $formMessage = $(".form-message");
+	// const $formTabsList = $(".form-tabs-list");
 
-		if ($formMessage.length && $formMessage.css("position") === "sticky") {
-			$formMessage.css("top", `${stickyOffset}px`);
-		}
+	// if ($formMessage.length && $formMessage.css("position") === "sticky") {
+	// 	$formMessage.css("top", `${stickyOffset}px`);
+	// }
 
-		if ($formTabsList.length && $formTabsList.css("position") === "sticky") {
-			$formTabsList.css("top", `${stickyOffset}px`);
-		}
-	}, 50);
+	// if ($formTabsList.length && $formTabsList.css("position") === "sticky") {
+	// 	$formTabsList.css("top", `${stickyOffset}px`);
+	// }
 
-	// Hide form's patient info only (keep page title)
-	setTimeout(() => {
-		$(".form-patient-info, .patient-details-section").hide();
-	}, 100);
+	$(".form-patient-info, .patient-details-section").hide();
 }
 
 // --- Bind to Patient Encounter ---
 frappe.ui.form.on('Patient Encounter', {
 	onload_post_render(frm) {
-		function refreshBannerAndFields(patientCtx) {
-			if (!patientCtx) return;
+		function refreshBannerAndFields(patientCtx, updateFields) {
+			if (!patientCtx) {
+				frappe.new_doc("Patient Encounter");
+			};
 
 			// 1️⃣ Update Encounter fields if patient/appointment differ
-			const currentPatient = frm.doc.patient;
-			const currentAppointment = frm.doc.appointment;
+			if (updateFields) {
+				const currentPatient = frm.doc.patient;
+				const currentAppointment = frm.doc.appointment;
 
-			// Only update if different (avoid recursion/dirty state)
-			if (patientCtx.patient && patientCtx.patient !== currentPatient) {
-				frm.set_value("patient", patientCtx.patient);
+				// Only update if different (avoid recursion/dirty state)
+				if (patientCtx.patient && patientCtx.patient !== currentPatient) {
+					frm.set_value("patient", patientCtx.patient);
+				}
+				if (patientCtx.appointment && patientCtx.appointment !== currentAppointment) {
+					frm.set_value("appointment", patientCtx.appointment);
+				}
 			}
-			if (patientCtx.appointment && patientCtx.appointment !== currentAppointment) {
-				frm.set_value("appointment", patientCtx.appointment);
-			}
+
 
 			// 2️⃣ Recreate banner with fade transition for smooth UX
 			const $oldBanner = $(".do-health-patient-banner");
-			if ($oldBanner.length) {
+			if ($oldBanner.length && frm.doc.patient) {
 				$oldBanner.fadeOut(150, function () {
 					$(this).remove();
 					createPatientInfoBanner(patientCtx);
 				});
-			} else {
+			} else if (frm.doc.patient) {
 				createPatientInfoBanner(patientCtx);
 			}
 
@@ -865,20 +1609,26 @@ frappe.ui.form.on('Patient Encounter', {
 
 		// Subscribe to patientWatcher (fires when sidebar patient changes)
 		if (window.do_health?.patientWatcher) {
-			window.do_health.patientWatcher.subscribe(refreshBannerAndFields);
+			window.do_health.patientWatcher.subscribe(refreshBannerAndFields, true);
 		}
 
 		// Initial banner if already stored
 		const current = window.do_health?.patientWatcher?.read();
-		if (current) refreshBannerAndFields(current);
+		if (current) refreshBannerAndFields(current, false);
 	},
 	refresh(frm) {
+		$(".do-health-patient-banner").remove();
+		$(".encounter-side-panel").remove();
 		do_health.encounter_sidebar.init(frm);
 	},
 	patient(frm) {
 		if (frm.doc.patient) {
 			frm._sidebar_initialized = false;
 			do_health.encounter_sidebar.init(frm);
+		}
+		else {
+			$(".do-health-patient-banner").remove();
+			$(".encounter-side-panel").remove();
 		}
 	}
 });

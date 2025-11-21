@@ -14,6 +14,7 @@
   "route_value",
   "route_params",
   "requires_patient",
+  "is_footer_action",
   "is_active",
   "sequence",
   "badge_method",
@@ -105,11 +106,17 @@
    "fieldtype": "Table MultiSelect",
    "label": "Allowed Roles",
    "options": "Role Multitable"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_footer_action",
+   "fieldtype": "Check",
+   "label": "Is Footer Action"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-11-15 17:27:25.882987",
+ "modified": "2025-11-21 07:59:22.236540",
  "modified_by": "Administrator",
  "module": "Do Health",
  "name": "Health Sidebar Item",
