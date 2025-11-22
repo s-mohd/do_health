@@ -695,14 +695,15 @@
                         })
                     );
 
-                    // Use frappe-timestamp for auto-updating time
+                    // Use custom auto-updating timestamp
                     const $timeChip = $("<span>", {
                         class: "do-health-chip do-health-chip--time"
                     });
                     
                     if (patient.arrival_time && isValidDate(patient.arrival_time)) {
+                        const minutes = formatMinutesSince(patient.arrival_time);
                         $timeChip.html(
-                            `<span class="frappe-timestamp mini" data-timestamp="${patient.arrival_time}" title="${patient.arrival_time}">${minutes}</span>`
+                            `<span class="waitinglist-timestamp" data-timestamp="${patient.arrival_time}" title="${patient.arrival_time}">${minutes}</span>`
                         );
                     } else {
                         $timeChip.text("–");
@@ -889,6 +890,36 @@
     }
 
     let waitingListHash = "";
+    let waitingTimeUpdateInterval = null;
+
+    // Auto-update waiting list timestamps using custom format
+    function updateWaitingListTimestamps() {
+        $('.waitinglist-timestamp').each(function() {
+            const $timestamp = $(this);
+            const arrivalTime = $timestamp.attr('data-timestamp');
+            if (arrivalTime && isValidDate(arrivalTime)) {
+                const formattedTime = formatMinutesSince(arrivalTime);
+                $timestamp.text(formattedTime);
+            }
+        });
+    }
+
+    // Start the auto-update interval
+    function startWaitingListTimestamps() {
+        if (waitingTimeUpdateInterval) {
+            clearInterval(waitingTimeUpdateInterval);
+        }
+        // Update every 30 seconds
+        waitingTimeUpdateInterval = setInterval(updateWaitingListTimestamps, 30000);
+    }
+
+    // Stop the auto-update interval
+    function stopWaitingListTimestamps() {
+        if (waitingTimeUpdateInterval) {
+            clearInterval(waitingTimeUpdateInterval);
+            waitingTimeUpdateInterval = null;
+        }
+    }
 
     async function fetchWaitingPatients(triggeredByRealtime = false) {
         try {
@@ -905,6 +936,8 @@
                 state.waiting = normalized;
                 renderWaitingList(state.waiting);
                 restorePatientContext();
+                // Start auto-updating timestamps
+                startWaitingListTimestamps();
             }
         } catch (error) {
             console.error("[do_health] Failed to fetch waiting patients", error);
@@ -961,6 +994,11 @@
         } else {
             fetchWaitingPatients();
         }
+    });
+
+    // Clean up interval on page unload
+    $(window).on('beforeunload', () => {
+        stopWaitingListTimestamps();
     });
 
     window.doHealthSidebar = window.doHealthSidebar || {};
