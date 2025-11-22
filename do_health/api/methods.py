@@ -2041,3 +2041,36 @@ def get_patient_documents(patient):
 	documents.sort(key=lambda x: x["latest_file"], reverse=True)
 
 	return {"documents": documents, "total_files": total_files}
+
+
+@frappe.whitelist()
+def get_appointment_counts_for_month(start_date, end_date):
+	"""
+	Get the count of appointments for each day in the given date range
+	:param start_date: Start date of the range (YYYY-MM-DD)
+	:param end_date: End date of the range (YYYY-MM-DD)
+	:return: dict with date as key and count as value
+	"""
+	from collections import defaultdict
+	
+	appointments = frappe.db.sql("""
+		SELECT 
+			DATE(appointment_datetime) as appointment_date,
+			COUNT(*) as count
+		FROM `tabPatient Appointment`
+		WHERE appointment_datetime >= %(start)s 
+			AND appointment_datetime < %(end)s
+			AND ifnull(status, '') != 'Cancelled'
+		GROUP BY DATE(appointment_datetime)
+	""", {
+		'start': start_date,
+		'end': end_date
+	}, as_dict=True)
+	
+	# Convert to a simple dict for easy lookup
+	counts = {}
+	for appt in appointments:
+		date_str = appt.appointment_date.strftime('%Y-%m-%d')
+		counts[date_str] = appt.count
+	
+	return counts

@@ -39,6 +39,9 @@ const ACTION_MENU_ITEMS = (BOOT_CALENDAR_SETTINGS.action_menu_items && BOOT_CALE
 
 const ROOM_UNASSIGNED_RESOURCE = '__room_unassigned__';
 
+// LocalStorage keys for filter persistence
+const FILTER_STORAGE_KEY = 'patient_appointment_calendar_filters';
+
 // Quick visit status shortcuts surfaced in the context menu
 const VISIT_STATUS_OPTIONS = [
     { value: 'Scheduled', label: 'Scheduled', icon: 'fa-regular fa-calendar-days' },
@@ -60,11 +63,90 @@ frappe.views.calendar["Patient Appointment"] = {
         unavailableByResourceDate: {},
         resourceMode: 'doctors',
         resourceFilters: {
-            doctors: { showAll: false },
+            doctors: { showAll: true },
             rooms: { showAll: true }
         },
         isDatepickerSyncing: false,
         isPointerDown: false
+    },
+
+    // Save filter state to localStorage
+    saveFiltersToStorage: function() {
+        const filterState = {
+            resourceMode: this.state.resourceMode,
+            showcancelled: this.state.showcancelled,
+            resourceFilters: this.state.resourceFilters
+        };
+        try {
+            localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filterState));
+        } catch (e) {
+            console.warn('Failed to save filter state to localStorage:', e);
+        }
+    },
+
+    // Load filter state from localStorage
+    loadFiltersFromStorage: function() {
+        try {
+            const stored = localStorage.getItem(FILTER_STORAGE_KEY);
+            if (stored) {
+                const filterState = JSON.parse(stored);
+                if (filterState.resourceMode) {
+                    this.state.resourceMode = filterState.resourceMode;
+                }
+                if (typeof filterState.showcancelled === 'boolean') {
+                    this.state.showcancelled = filterState.showcancelled;
+                }
+                if (filterState.resourceFilters) {
+                    this.state.resourceFilters = Object.assign({}, this.state.resourceFilters, filterState.resourceFilters);
+                }
+                return true;
+            } else {
+                // No saved filters, apply defaults
+                this.state.resourceMode = 'doctors';
+                this.state.showcancelled = false;
+                this.state.resourceFilters = {
+                    doctors: { showAll: true },
+                    rooms: { showAll: true }
+                };
+                return false;
+            }
+        } catch (e) {
+            console.warn('Failed to load filter state from localStorage:', e);
+            // On error, apply defaults
+            this.state.resourceMode = 'doctors';
+            this.state.showcancelled = false;
+            this.state.resourceFilters = {
+                doctors: { showAll: true },
+                rooms: { showAll: true }
+            };
+        }
+        return false;
+    },
+
+    // Clear filters and restore defaults
+    clearFilters: function() {
+        this.state.resourceMode = 'doctors';
+        this.state.showcancelled = false;
+        this.state.resourceFilters = {
+            doctors: { showAll: true },
+            rooms: { showAll: true }
+        };
+        try {
+            localStorage.removeItem(FILTER_STORAGE_KEY);
+        } catch (e) {
+            console.warn('Failed to clear filter state from localStorage:', e);
+        }
+        
+        // Refresh calendar
+        const calendar = cur_list?.calendar?.fullCalendar;
+        if (calendar) {
+            calendar.refetchResources();
+            calendar.refetchEvents();
+        }
+        this.updateResourceModeButtons(this.state.resourceMode);
+        this.updateCancelledButtonLabel();
+        this.updateClearFiltersButton();
+        frappe.show_alert({ message: __('Filters cleared'), indicator: 'blue' });
     },
 
     // Get CSS class names based on status
@@ -175,7 +257,7 @@ frappe.views.calendar["Patient Appointment"] = {
         headerToolbar: {
             left: "jumpToNow searchAppointments",
             center: "title",
-            right: "doctors rooms cancelled toggleSide"
+            right: "doctors rooms cancelled clearFilters toggleSide"
         },
 
         titleFormat: {
@@ -224,6 +306,13 @@ frappe.views.calendar["Patient Appointment"] = {
 
         resources: function (fetchInfo, successCallback, failureCallback) {
             const calendarView = frappe.views.calendar["Patient Appointment"];
+            
+            // Ensure filters are loaded before determining resource mode
+            if (!calendarView.state._filtersLoaded) {
+                calendarView.loadFiltersFromStorage();
+                calendarView.state._filtersLoaded = true;
+            }
+            
             const mode = calendarView?.state?.resourceMode || 'doctors';
             const cacheKey = mode === 'rooms' ? 'service_unit_resources' : 'practitioner_resources';
             const cacheTime = 5 * 60 * 1000; // 5 minutes cache
@@ -324,6 +413,8 @@ frappe.views.calendar["Patient Appointment"] = {
                     cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
 
                     calendarView.updateCancelledButtonLabel();
+                    calendarView.updateClearFiltersButton();
+                    calendarView.saveFiltersToStorage();
                 }
             },
             toggleSide: {
@@ -342,6 +433,13 @@ frappe.views.calendar["Patient Appointment"] = {
                 text: '',
                 click: function () {
                     frappe.views.calendar["Patient Appointment"].showSearchDialog();
+                }
+            },
+            clearFilters: {
+                text: '',
+                hint: __('Clear all filters'),
+                click: function () {
+                    frappe.views.calendar["Patient Appointment"].clearFilters();
                 }
             }
         },
@@ -469,9 +567,21 @@ frappe.views.calendar["Patient Appointment"] = {
             render_datepicker();
             set_current_session(info.view);
             sessionStorage.server_update = 0;
-
-            // Update current view state
+            
             const calendarView = frappe.views.calendar["Patient Appointment"];
+            
+            // Load filters from localStorage on first render (if not already loaded)
+            if (!calendarView.state._filtersLoaded) {
+                calendarView.loadFiltersFromStorage();
+                calendarView.state._filtersLoaded = true;
+            }
+            
+            // Apply the resource mode filter on first render
+            if (!calendarView.state._filterModeApplied) {
+                calendarView.applyResourceFilterMode(calendarView.state.resourceMode);
+                calendarView.state._filterModeApplied = true;
+            }
+            
             calendarView.state.currentView = info.view.type;
             calendarView.state.lastViewInfo = info;
             calendarView.updateResourceModeButtons(calendarView.state.resourceMode);
@@ -856,6 +966,8 @@ frappe.views.calendar["Patient Appointment"] = {
 
         this.applyResourceFilterMode(normalized);
         this.updateResourceAreaHeader();
+        this.updateClearFiltersButton();
+        this.saveFiltersToStorage();
     },
 
     handleResourceButtonClick: function (mode) {
@@ -868,6 +980,8 @@ frappe.views.calendar["Patient Appointment"] = {
         if (mode !== 'rooms')
             this.state.resourceFilters[normalized].showAll = !this.state.resourceFilters[normalized].showAll;
         this.applyResourceFilterMode(normalized, { rerender: true });
+        this.updateClearFiltersButton();
+        this.saveFiltersToStorage();
     },
 
     applyResourceFilterMode: function (mode, opts) {
@@ -921,10 +1035,38 @@ frappe.views.calendar["Patient Appointment"] = {
         this.updateToolbarButtonLabel('.fc-cancelled-button', label);
     },
 
+    isFiltersAtDefault: function() {
+        return this.state.resourceMode === 'doctors' && 
+               !this.state.showcancelled && 
+               this.state.resourceFilters.doctors.showAll;
+    },
+
     updateStaticButtonLabels: function () {
         this.updateToolbarButtonLabel('.fc-toggleSide-button', '☰');
         this.updateToolbarButtonLabel('.fc-jumpToNow-button', '⏰ Now');
         this.updateToolbarButtonLabel('.fc-searchAppointments-button', '🔍 Search');
+        this.updateClearFiltersButton();
+    },
+
+    updateClearFiltersButton: function() {
+        const $clearBtn = $('.fc-clearFilters-button');
+        if (!$clearBtn.length) return;
+        
+        const isDefault = this.isFiltersAtDefault();
+        $clearBtn.empty();
+        $clearBtn.append(frappe.utils.icon('filter-x', 'sm'));
+        
+        if (!isDefault) {
+            // Add text when filters are not at default
+            $clearBtn.prop('disabled', false);
+            $clearBtn.removeClass('fc-button-disabled');
+        } else {
+            // Disable button when filters are at default
+            $clearBtn.prop('disabled', true);
+            $clearBtn.addClass('fc-button-disabled');
+        }
+        
+        $clearBtn.attr('title', __('Clear filters'));
     },
 
     updateResourceModeButtons: function (activeMode) {
@@ -2093,17 +2235,8 @@ frappe.views.calendar["Patient Appointment"] = {
 
 // Helper functions
 
-// update_waiting_list with real-time updates
-function update_waiting_list() {
-    frappe.call({
-        method: 'do_health.api.methods.get_waiting_list',
-        callback: function (r) {
-            render_waiting_list_table(r.message);
-            // Schedule next update
-            setTimeout(update_waiting_list, 30000); // Update every 30 seconds
-        }
-    });
-}
+// Load waiting list data once on page load
+
 
 function render_datepicker() {
     cur_list.$page.find('.custom-actions').addClass('hidden');
@@ -2111,7 +2244,10 @@ function render_datepicker() {
         sessionStorage.server_update = 0;
 
         const calendarView = frappe.views.calendar["Patient Appointment"];
-        cur_list.$page.find(".layout-side-section .list-sidebar").html(function () {
+        const $sidebar = cur_list.$page.find(".layout-side-section .list-sidebar");
+        
+        // Add datepicker
+        $sidebar.html(function () {
             return $('<div id="monthdatepicker"></div>').datepicker({
                 language: 'en',
                 todayButton: new Date(),
@@ -2131,6 +2267,22 @@ function render_datepicker() {
                         cur_list.calendar.fullCalendar.gotoDate(selectedDate);
                     }
                 },
+                onChangeMonth: function (month, year) {
+                    // Fetch and display appointment counts when month changes
+                    updateAppointmentBadges(month, year);
+                },
+                onRenderCell: function (date, cellType) {
+                    if (cellType === 'day') {
+                        const dateStr = moment(date).format('YYYY-MM-DD');
+                        const count = window._appointmentCounts?.[dateStr] || 0;
+                        
+                        if (count > 0) {
+                            return {
+                                html: date.getDate() + `<span class="appointment-badge">${count}</span>`
+                            };
+                        }
+                    }
+                }
             });
 
         });
@@ -2140,7 +2292,42 @@ function render_datepicker() {
         $("div.col-lg-2.layout-side-section").css('padding', '1px');
 
         calendarView?.syncDatepickerWithCalendar();
+        
+        // Initial load of appointment badges
+        const now = new Date();
+        updateAppointmentBadges(now.getMonth(), now.getFullYear());
+        
+        // Waiting list is now rendered in the health sidebar (do-health-secondary-wrapper)
     }
+}
+
+function updateAppointmentBadges(month, year) {
+    // Calculate start and end dates for the month
+    const startDate = moment([year, month, 1]).format('YYYY-MM-DD');
+    const endDate = moment([year, month]).add(1, 'month').format('YYYY-MM-DD');
+    
+    frappe.call({
+        method: 'do_health.api.methods.get_appointment_counts_for_month',
+        args: {
+            start_date: startDate,
+            end_date: endDate
+        },
+        callback: function(r) {
+            if (r.message) {
+                window._appointmentCounts = r.message;
+                
+                // Update the datepicker to show badges
+                const $picker = $('#monthdatepicker');
+                if ($picker.length) {
+                    const pickerInstance = $picker.data('datepicker');
+                    if (pickerInstance) {
+                        // Force re-render of the calendar
+                        pickerInstance.update();
+                    }
+                }
+            }
+        }
+    });
 }
 
 function set_current_session(view) {
