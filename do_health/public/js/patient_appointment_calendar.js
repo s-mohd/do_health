@@ -567,8 +567,7 @@ frappe.views.calendar["Patient Appointment"] = {
             render_datepicker();
             set_current_session(info.view);
             sessionStorage.server_update = 0;
-
-            // Update current view state
+            
             const calendarView = frappe.views.calendar["Patient Appointment"];
             
             // Load filters from localStorage on first render (if not already loaded)
@@ -2236,17 +2235,8 @@ frappe.views.calendar["Patient Appointment"] = {
 
 // Helper functions
 
-// update_waiting_list with real-time updates
-function update_waiting_list() {
-    frappe.call({
-        method: 'do_health.api.methods.get_waiting_list',
-        callback: function (r) {
-            render_waiting_list_table(r.message);
-            // Schedule next update
-            setTimeout(update_waiting_list, 30000); // Update every 30 seconds
-        }
-    });
-}
+// Load waiting list data once on page load
+
 
 function render_datepicker() {
     cur_list.$page.find('.custom-actions').addClass('hidden');
@@ -2254,7 +2244,10 @@ function render_datepicker() {
         sessionStorage.server_update = 0;
 
         const calendarView = frappe.views.calendar["Patient Appointment"];
-        cur_list.$page.find(".layout-side-section .list-sidebar").html(function () {
+        const $sidebar = cur_list.$page.find(".layout-side-section .list-sidebar");
+        
+        // Add datepicker
+        $sidebar.html(function () {
             return $('<div id="monthdatepicker"></div>').datepicker({
                 language: 'en',
                 todayButton: new Date(),
@@ -2303,6 +2296,8 @@ function render_datepicker() {
         // Initial load of appointment badges
         const now = new Date();
         updateAppointmentBadges(now.getMonth(), now.getFullYear());
+        
+        // Waiting list is now rendered in the health sidebar (do-health-secondary-wrapper)
     }
 }
 
