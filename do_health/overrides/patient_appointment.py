@@ -117,20 +117,55 @@ class CustomPatientAppointment(PatientAppointment):
 		if doc_before_save and not doc_before_save.insurance_policy == self.insurance_policy:
 			self.make_insurance_coverage()
 
-
+		# Publish realtime waiting list updates when status changes to/from Arrived
 		prev_doc = self.get_doc_before_save() or frappe._dict()
 		current = self.get("custom_visit_status")
 		prev = prev_doc.get("custom_visit_status")
+		
 		if current != prev and (current == "Arrived" or prev == "Arrived"):
 			waiting_list = frappe.db.sql("""
-                SELECT pa.name, pa.patient_name, pa.patient, pa.practitioner, at.time as arrival_time, pa.appointment_time, pa.appointment_date
-                FROM `tabPatient Appointment` pa
-                LEFT JOIN `tabAppointment Time Logs` at ON pa.name = at.parent AND at.status = 'Arrived'
-                WHERE pa.custom_visit_status = 'Arrived' AND pa.appointment_date = CURDATE()
-                ORDER BY at.time DESC
+				SELECT 
+					pa.name,
+					pa.appointment_type,
+					pa.patient_name,
+					pa.patient,
+					p.mobile,
+					p.dob,
+					p.custom_cpr,
+					p.custom_file_number,
+					p.image AS patient_image,
+					p.sex AS gender,
+					pa.practitioner,
+					pa.practitioner_name,
+					pa.custom_visit_status,
+					at.arrival_time,
+					pa.appointment_time,
+					pa.appointment_date
+				FROM `tabPatient Appointment` pa
+				LEFT JOIN (
+					SELECT parent, MAX(time) AS arrival_time
+					FROM `tabAppointment Time Logs`
+					WHERE status = 'Arrived'
+					GROUP BY parent
+				) at ON pa.name = at.parent
+				LEFT JOIN `tabPatient` p 
+					ON pa.patient = p.name
+				WHERE pa.custom_visit_status = 'Arrived' 
+				AND pa.appointment_date = CURDATE()
+				ORDER BY pa.practitioner_name, at.arrival_time ASC
 			""", as_dict=True)
-   
-			frappe.publish_realtime("waiting_list", waiting_list)
+			
+			frappe.publish_realtime(
+				event="do_health_waiting_list_update",
+				message=waiting_list,
+				after_commit=True
+			)
+			
+			frappe.publish_realtime(
+				event="patient_appointments_updated",
+				message={"appointment": self.name, "status": current},
+				after_commit=True
+			)
 
 @frappe.whitelist()
 def update_fee_validity(appointment):

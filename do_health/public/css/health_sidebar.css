@@ -830,6 +830,44 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     background: rgba(15, 23, 42, 0.08);
 }
 
+/* === APPOINTMENT BADGE ON DATEPICKER === */
+.datepicker--cell.-day- {
+    position: relative;
+    overflow: visible;
+}
+
+.appointment-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    background: var(--do-health-accent);
+    color: white;
+    font-size: 6px;
+    font-weight: 700;
+    min-width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 2px;
+    line-height: 1;
+    box-shadow: 0 1px 2px rgba(22, 163, 74, 0.5);
+    z-index: 10;
+    pointer-events: none;
+}
+
+.datepicker--cell.-current- .appointment-badge {
+    background: var(--do-health-accent-hover);
+    box-shadow: 0 1px 3px rgba(34, 197, 94, 0.6);
+}
+
+.datepicker--cell.-selected- .appointment-badge {
+    background: white;
+    color: var(--do-health-accent);
+    font-weight: 800;
+}
+
 /* --- Patient Overview Drawer --- */
 .do-health-overview {
     position: fixed;

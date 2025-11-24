@@ -1114,7 +1114,7 @@
                         class: "do-health-waiting-item",
                         "title": patient.patient_name,
                         "data-patient": patient.patient,
-                        "data-appointment": patient.appointment,
+                        "data-appointment": patient.appointment
                     });
 
                     if (state.selectedPatient?.patient === patient.patient && state.selectedPatient?.appointment === patient.appointment) {
@@ -1137,11 +1137,22 @@
                         })
                     );
 
+                    // Use custom auto-updating timestamp
+                    const $timeChip = $("<span>", {
+                        class: "do-health-chip do-health-chip--time"
+                    });
+                    
+                    if (patient.arrival_time && isValidDate(patient.arrival_time)) {
+                        const minutes = formatMinutesSince(patient.arrival_time);
+                        $timeChip.html(
+                            `<span class="waitinglist-timestamp" data-timestamp="${patient.arrival_time}" title="${patient.arrival_time}">${minutes}</span>`
+                        );
+                    } else {
+                        $timeChip.text("–");
+                    }
+
                     const $right = $("<div>", { class: "do-health-waiting-item__right" }).append(
-                        $("<span>", {
-                            class: "do-health-chip do-health-chip--time",
-                            text: minutes || "–"
-                        }),
+                        $timeChip,
                         status && status !== "Arrived"
                             ? $("<span>", {
                                 class: "do-health-status-pill",
@@ -1321,6 +1332,36 @@
     }
 
     let waitingListHash = "";
+    let waitingTimeUpdateInterval = null;
+
+    // Auto-update waiting list timestamps using custom format
+    function updateWaitingListTimestamps() {
+        $('.waitinglist-timestamp').each(function() {
+            const $timestamp = $(this);
+            const arrivalTime = $timestamp.attr('data-timestamp');
+            if (arrivalTime && isValidDate(arrivalTime)) {
+                const formattedTime = formatMinutesSince(arrivalTime);
+                $timestamp.text(formattedTime);
+            }
+        });
+    }
+
+    // Start the auto-update interval
+    function startWaitingListTimestamps() {
+        if (waitingTimeUpdateInterval) {
+            clearInterval(waitingTimeUpdateInterval);
+        }
+        // Update every 30 seconds
+        waitingTimeUpdateInterval = setInterval(updateWaitingListTimestamps, 30000);
+    }
+
+    // Stop the auto-update interval
+    function stopWaitingListTimestamps() {
+        if (waitingTimeUpdateInterval) {
+            clearInterval(waitingTimeUpdateInterval);
+            waitingTimeUpdateInterval = null;
+        }
+    }
 
     async function fetchWaitingPatients(triggeredByRealtime = false) {
         try {
@@ -1337,6 +1378,8 @@
                 state.waiting = normalized;
                 renderWaitingList(state.waiting);
                 restorePatientContext();
+                // Start auto-updating timestamps
+                startWaitingListTimestamps();
             }
         } catch (error) {
             console.error("[do_health] Failed to fetch waiting patients", error);
@@ -1347,15 +1390,7 @@
         }
     }
 
-    function registerRealtime() {
-        if (state.realtimeRegistered) return;
 
-        const realtimeHandler = () => fetchWaitingPatients(true);
-
-        frappe.realtime.on("do_health_waiting_list_update", realtimeHandler);
-        frappe.realtime.on("patient_appointments_updated", realtimeHandler);
-        state.realtimeRegistered = true;
-    }
 
     function registerAppSwitcherListener() {
         if (appSwitcherListenerRegistered) return;
@@ -1387,7 +1422,6 @@
         restorePatientContext();
         renderWaitingList(state.waiting);
         fetchWaitingPatients();
-        registerRealtime();
         registerAppSwitcherListener();
 
         frappe.router.on("change", syncActiveNavWithRoute);
@@ -1404,6 +1438,11 @@
         }
     });
 
+    // Clean up interval on page unload
+    $(window).on('beforeunload', () => {
+        stopWaitingListTimestamps();
+    });
+
     window.doHealthSidebar = window.doHealthSidebar || {};
     Object.assign(window.doHealthSidebar, {
         config: SIDEBAR_CONFIG,
@@ -1416,6 +1455,36 @@
         },
         getSelectedPatient() {
             return state.selectedPatient || getSavedPatientContext();
+        },
+        refreshWaitingList() {
+            return fetchWaitingPatients(true);
         }
     });
 })();
+
+// Register realtime events after socket is connected
+function registerHealthSidebarRealtime() {
+    if (!frappe.realtime || !frappe.realtime.on) {
+        setTimeout(registerHealthSidebarRealtime, 100);
+        return;
+    }
+    
+    if (!frappe.realtime.socket || !frappe.realtime.socket.connected) {
+        setTimeout(registerHealthSidebarRealtime, 100);
+        return;
+    }
+    
+    frappe.realtime.on("do_health_waiting_list_update", function(data) {
+        if (window.doHealthSidebar && window.doHealthSidebar.refreshWaitingList) {
+            window.doHealthSidebar.refreshWaitingList();
+        }
+    });
+    
+    frappe.realtime.on("patient_appointments_updated", function(data) {
+        if (window.doHealthSidebar && window.doHealthSidebar.refreshWaitingList) {
+            window.doHealthSidebar.refreshWaitingList();
+        }
+    });
+}
+
+registerHealthSidebarRealtime();
