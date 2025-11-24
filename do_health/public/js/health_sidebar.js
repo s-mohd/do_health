@@ -32,6 +32,14 @@
         secondaryCollapsed: loadSecondaryCollapsed()
     };
 
+    const OVERVIEW_DRAWER_ID = "do-health-patient-overview";
+    const overviewState = {
+        $overlay: null,
+        currentPatient: null,
+        watcherUnsub: null,
+        isOpen: false
+    };
+
     const translate = (...args) => (typeof __ === "function" ? __(...args) : args[0]);
 
     const isValidDate = (value) => value && !Number.isNaN(new Date(value).getTime());
@@ -613,7 +621,12 @@
             $action.append($badge);
 
             if (!disabled) {
-                $action.on("click", () => navigateToItem(item, patient));
+                const isOverview = (item.route_value || "").toLowerCase() === "patient-overview";
+                if (isOverview) {
+                    $action.on("click", () => openPatientOverviewDrawer(patient));
+                } else {
+                    $action.on("click", () => navigateToItem(item, patient));
+                }
             } else {
                 $action.attr("title", translate("Select a patient first"));
             }
@@ -625,6 +638,430 @@
             .children(".do-health-selected-action")
             .filter((_, el) => !$(el).hasClass("disabled"));
         $interactive.first().addClass("active");
+    }
+
+    async function openPatientOverviewDrawer(patient) {
+        const normalized = normalizePatient(patient) || patient;
+        if (!normalized?.patient) {
+            frappe.msgprint(translate("Select a patient first."));
+            return;
+        }
+
+        ensureOverviewDrawerShell();
+        overviewState.isOpen = true;
+        overviewState.currentPatient = normalized.patient;
+
+        overviewState.$overlay.addClass("is-open");
+        showOverviewLoading(translate("Loading patient overview..."));
+        attachOverviewWatcher();
+
+        await loadPatientOverview(normalized);
+    }
+
+    async function loadPatientOverview(patient) {
+        const normalized = normalizePatient(patient) || patient;
+        if (!normalized?.patient) {
+            showOverviewLoading(translate("Select a patient first."));
+            return;
+        }
+
+        overviewState.currentPatient = normalized.patient;
+        showOverviewLoading(translate("Loading patient overview..."));
+
+        try {
+            const { message } = await frappe.call({
+                method: "do_health.api.methods.get_patient_overview",
+                args: {
+                    patient: normalized.patient,
+                    appointment: normalized.appointment || null
+                }
+            });
+            renderPatientOverview(message || {}, normalized);
+        } catch (error) {
+            console.warn("[do_health] Failed to load patient overview", error);
+            const $content = overviewState.$overlay?.find(".do-health-overview__content");
+            if ($content?.length) {
+                $content.html(
+                    `<div class="do-health-overview__empty">${translate("Unable to load patient overview.")}</div>`
+                );
+            }
+        }
+    }
+
+    function renderPatientOverview(data, patientContext) {
+        ensureOverviewDrawerShell();
+        const $overlay = overviewState.$overlay;
+        const $content = $overlay.find(".do-health-overview__content");
+        const info = data.patient || {};
+        const contact = data.contact || {};
+        const emergency = data.emergency_contact || {};
+        const appointment = data.upcoming_appointment;
+        const encounter = data.last_encounter;
+        const vitals = Array.isArray(data.vitals) ? data.vitals : [];
+        const counts = data.counts || {};
+
+        const patientName = info.patient_name || patientContext?.patient_name || patientContext?.patient || translate("Patient");
+        const gender = info.gender || "";
+        const metaPieces = [];
+        if (info.age || info.age === 0) metaPieces.push(`${info.age} ${translate("Y")}`);
+        if (gender) metaPieces.push(gender);
+        const metaLabel = metaPieces.join(" • ");
+
+        const chips = [];
+        if (info.file_number) chips.push(buildChip(translate("File") + ": " + info.file_number));
+        if (info.cpr) chips.push(buildChip("CPR: " + info.cpr));
+        if (info.blood_group) chips.push(buildChip(translate("Blood") + ": " + info.blood_group));
+
+        const contactChips = [];
+        if (contact.phone) contactChips.push(buildLinkChip(contact.phone, `tel:${contact.phone}`, "fa-regular fa-phone"));
+        if (contact.secondary_phone) contactChips.push(buildLinkChip(contact.secondary_phone, `tel:${contact.secondary_phone}`, "fa-regular fa-phone"));
+        if (contact.email) contactChips.push(buildLinkChip(contact.email, `mailto:${contact.email}`, "fa-regular fa-envelope"));
+
+        const avatarInitials = (patientName || "")
+            .split(" ")
+            .map((word) => word[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase();
+
+        const headerHtml = `
+            <div class="do-health-overview__hero">
+                <div class="do-health-overview__avatar">
+                    ${info.patient_image ? `<img src="${escapeHtml(info.patient_image)}" alt="${escapeHtml(patientName)}" />` : escapeHtml(avatarInitials || "?")}
+                </div>
+                <div class="do-health-overview__hero-text">
+                    <div class="do-health-overview__eyebrow">${translate("Patient Details")}</div>
+                    <div class="do-health-overview__name">${escapeHtml(patientName)}</div>
+                    ${metaLabel ? `<div class="do-health-overview__muted">${escapeHtml(metaLabel)}</div>` : ""}
+                    ${chips.length ? `<div class="do-health-overview__chip-row">${chips.join("")}</div>` : ""}
+                    ${contactChips.length ? `<div class="do-health-overview__chip-row contact">${contactChips.join("")}</div>` : ""}
+                </div>
+                <div class="do-health-overview__cta">
+                    <button class="do-health-overview__btn" type="button" data-open-patient-record>
+                        ${translate("Open Record")}
+                    </button>
+                    <button class="do-health-overview__btn ghost" type="button" data-close-overview>${translate("Close")}</button>
+                </div>
+            </div>
+        `;
+
+        const visitCard = buildOverviewCard(
+            translate("Visit Info"),
+            appointment
+                ? [
+                    infoRow(translate("Date & Time"), [appointment.appointment_date_label, appointment.appointment_time_label].filter(Boolean).join(" • "), "fa-regular fa-calendar"),
+                    infoRow(translate("Practitioner"), appointment.practitioner_name || appointment.practitioner, "fa-regular fa-user-doctor"),
+                    infoRow(translate("Reason"), appointment.custom_visit_reason || translate("Not recorded"), "fa-regular fa-clipboard-list"),
+                ].join("")
+                : `<div class="do-health-overview__empty">${translate("No upcoming appointments found")}</div>`,
+            {
+                badge: appointment.status || appointment.custom_visit_status,
+                actionLabel: appointment.name ? translate("Open Appointment") : null,
+                actionAttr: appointment.name ? "data-open-appointment" : null
+            }
+        );
+
+        const encounterCard = buildOverviewCard(
+            translate("Last Encounter"),
+            encounter
+                ? [
+                    infoRow(translate("Date"), [encounter.encounter_date_label, encounter.encounter_time_label].filter(Boolean).join(" • "), "fa-regular fa-clock"),
+                    infoRow(translate("Practitioner"), encounter.practitioner_name || encounter.practitioner || translate("Not recorded"), "fa-regular fa-user-md"),
+                    infoRow(translate("Department"), encounter.medical_department || translate("Not recorded"), "fa-regular fa-building")
+                ].join("")
+                : `<div class="do-health-overview__empty">${translate("No encounters found")}</div>`,
+            {
+                badge: encounter?.status,
+                actionLabel: encounter?.name ? translate("Open Encounter") : null,
+                actionAttr: encounter?.name ? "data-open-encounter" : null
+            }
+        );
+
+        const emergencyCard = buildOverviewCard(
+            translate("Emergency Contact"),
+            buildEmergencyContact(emergency)
+        );
+
+        const statsCard = buildOverviewCard(
+            translate("At a Glance"),
+            `
+                <div class="do-health-overview__stats">
+                    <div><div class="label">${translate("Appointments")}</div><div class="value">${counts.appointments || 0}</div></div>
+                    <div><div class="label">${translate("Encounters")}</div><div class="value">${counts.encounters || 0}</div></div>
+                </div>
+            `
+        );
+
+        const vitalsBlock = buildVitalsBlock(vitals);
+
+        $content.html(`
+            ${headerHtml}
+            <div class="do-health-overview__cards">
+                ${visitCard}
+                ${emergencyCard}
+                ${encounterCard}
+                ${statsCard}
+            </div>
+            ${buildTabbedSection([
+            { id: "vitals", label: translate("Vitals"), content: vitalsBlock || "" },
+            { id: "medical", label: translate("Medical Records"), content: buildComingSoon(translate("Medical records summary coming soon.")) },
+            { id: "medications", label: translate("Medications"), content: buildComingSoon(translate("Medication history coming soon.")) },
+            { id: "labs", label: translate("Lab Test Results"), content: buildComingSoon(translate("Lab results summary coming soon.")) },
+        ])}
+        `);
+
+        $content.find("[data-open-patient-record]").on("click", () => {
+            frappe.set_route("Form", "Patient", info.name || patientContext?.patient);
+            closePatientOverviewDrawer();
+        });
+        $content.find("[data-close-overview]").on("click", closePatientOverviewDrawer);
+        $content.find("[data-open-appointment]").on("click", () => {
+            if (appointment?.name) {
+                frappe.set_route("Form", "Patient Appointment", appointment.name);
+                closePatientOverviewDrawer();
+            }
+        });
+        $content.find("[data-open-encounter]").on("click", () => {
+            if (encounter?.name) {
+                frappe.set_route("Form", "Patient Encounter", encounter.name);
+                closePatientOverviewDrawer();
+            }
+        });
+
+        wireTabs($content);
+    }
+
+    function buildOverviewCard(title, body, options = {}) {
+        const badge = options.badge ? `<span class="do-health-overview__pill">${escapeHtml(options.badge)}</span>` : "";
+        const actionButton =
+            options.actionLabel && options.actionAttr
+                ? `<button class="do-health-overview__link" type="button" ${options.actionAttr}>${escapeHtml(options.actionLabel)}</button>`
+                : "";
+        return `
+            <div class="do-health-overview__card">
+                <div class="do-health-overview__card-header">
+                    <div class="do-health-overview__card-title">${escapeHtml(title)}</div>
+                    <div class="do-health-overview__card-actions">
+                        ${badge}
+                        ${actionButton}
+                    </div>
+                </div>
+                ${body}
+            </div>
+        `;
+    }
+
+    function buildVitalsBlock(vitals) {
+        if (!vitals || !vitals.length) {
+            return `
+                <div class="do-health-overview__card do-health-overview__card--muted">
+                    <div class="do-health-overview__card-title">${translate("Vitals")}</div>
+                    <div class="do-health-overview__empty">${translate("No vitals captured yet.")}</div>
+                </div>
+            `;
+        }
+
+        const latest = vitals[0] || {};
+        const readings = latest.readings || {};
+        const items = [];
+        const bpValue = readings.bp || (readings.bp_systolic && readings.bp_diastolic ? `${readings.bp_systolic}/${readings.bp_diastolic}` : null);
+
+        if (bpValue) items.push({ label: translate("Blood Pressure"), value: `${bpValue} mmHg`, icon: "fa-solid fa-heart-pulse" });
+        if (readings.temperature) items.push({ label: translate("Temperature"), value: `${readings.temperature} °F`, icon: "fa-solid fa-temperature-three-quarters" });
+        if (readings.pulse) items.push({ label: translate("Heart Rate"), value: `${readings.pulse} bpm`, icon: "fa-solid fa-heart" });
+        if (readings.oxygen_saturation) items.push({ label: translate("Oxygen Saturation"), value: `${readings.oxygen_saturation}%`, icon: "fa-solid fa-wind" });
+        if (readings.weight) items.push({ label: translate("Weight"), value: `${readings.weight} kg`, icon: "fa-solid fa-weight-scale" });
+        if (readings.height) items.push({ label: translate("Height"), value: `${readings.height} cm`, icon: "fa-solid fa-ruler-vertical" });
+
+        const itemsHtml = items.map(
+            (item) => `
+                <div class="do-health-overview__pill-card">
+                    <div class="label"><i class="${item.icon}"></i> ${escapeHtml(item.label)}</div>
+                    <div class="value">${escapeHtml(item.value)}</div>
+                </div>
+            `
+        );
+
+        const meta = [latest.signs_date_label, latest.signs_time_label].filter(Boolean).join(" • ");
+
+        return `
+            <div class="do-health-overview__card">
+                <div class="do-health-overview__card-header">
+                    <div>
+                        <div class="do-health-overview__card-title">${translate("Vitals")}</div>
+                        ${meta ? `<div class="do-health-overview__muted">${escapeHtml(meta)}</div>` : ""}
+                    </div>
+                </div>
+                <div class="do-health-overview__pill-grid">
+                    ${itemsHtml.join("") || `<div class="do-health-overview__empty">${translate("No vitals captured yet.")}</div>`}
+                </div>
+            </div>
+        `;
+    }
+
+    function buildEmergencyContact(emergency) {
+        const name = emergency.name || translate("Not provided");
+        const relation = emergency.relation || translate("Relation not set");
+        const phone = emergency.phone;
+        const email = emergency.email;
+
+        return `
+            <div class="do-health-overview__emergency">
+                <div class="do-health-overview__row compact">
+                    <span class="do-health-overview__row-icon"><i class="fa-regular fa-user-shield"></i></span>
+                    <div class="do-health-overview__row-body">
+                        <div class="do-health-overview__row-label">${translate("Contact")}</div>
+                        <div class="do-health-overview__row-value">${escapeHtml(name)}</div>
+                        <div class="do-health-overview__muted small">${escapeHtml(relation)}</div>
+                    </div>
+                </div>
+                <div class="do-health-overview__contact-row">
+                    ${phone ? `<a class="do-health-overview__contact-btn" href="tel:${escapeHtml(phone)}"><i class="fa-regular fa-phone"></i><span>${escapeHtml(phone)}</span></a>` : `<span class="do-health-overview__muted">${translate("No phone provided")}</span>`}
+                    ${email ? `<a class="do-health-overview__contact-btn ghost" href="mailto:${escapeHtml(email)}"><i class="fa-regular fa-envelope"></i><span>${escapeHtml(email)}</span></a>` : ""}
+                </div>
+            </div>
+        `;
+    }
+
+    function buildTabbedSection(tabs = []) {
+        if (!tabs.length) return "";
+        const nav = tabs
+            .map(
+                (tab, idx) => `
+                <button class="do-health-overview__tab ${idx === 0 ? "active" : ""}" data-tab-target="${tab.id}">
+                    ${escapeHtml(tab.label)}
+                </button>`
+            )
+            .join("");
+        const bodies = tabs
+            .map(
+                (tab, idx) => `
+                <div class="do-health-overview__tab-pane ${idx === 0 ? "active" : ""}" data-tab-pane="${tab.id}">
+                    ${tab.content}
+                </div>`
+            )
+            .join("");
+
+        return `
+            <div class="do-health-overview__tabset">
+                <div class="do-health-overview__tablist">
+                    ${nav}
+                </div>
+                <div class="do-health-overview__tabbodies">
+                    ${bodies}
+                </div>
+            </div>
+        `;
+    }
+
+    function wireTabs($content) {
+        const $tabs = $content.find(".do-health-overview__tab");
+        $tabs.on("click", function () {
+            const target = $(this).data("tabTarget");
+            $tabs.removeClass("active");
+            $(this).addClass("active");
+            const $panes = $content.find(".do-health-overview__tab-pane");
+            $panes.removeClass("active");
+            $panes.filter(`[data-tab-pane="${target}"]`).addClass("active");
+        });
+    }
+
+    function buildComingSoon(text) {
+        return `<div class="do-health-overview__empty muted">${escapeHtml(text)}</div>`;
+    }
+
+    function infoRow(label, value, icon) {
+        const safeValue = value ? escapeHtml(value) : `<span class="do-health-overview__muted">${translate("Not available")}</span>`;
+        return `
+            <div class="do-health-overview__row">
+                ${icon ? `<span class="do-health-overview__row-icon"><i class="${icon}"></i></span>` : ""}
+                <div class="do-health-overview__row-body">
+                    <div class="do-health-overview__row-label">${escapeHtml(label)}</div>
+                    <div class="do-health-overview__row-value">${safeValue}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function buildChip(label) {
+        return `<span class="do-health-overview__chip">${escapeHtml(label)}</span>`;
+    }
+
+    function buildLinkChip(label, href, icon) {
+        if (!label) return "";
+        const safeHref = href ? `href="${escapeHtml(href)}"` : "";
+        return `<a class="do-health-overview__chip link" ${safeHref} target="_blank" rel="noreferrer">${icon ? `<i class="${icon}"></i>` : ""}${escapeHtml(label)}</a>`;
+    }
+
+    function ensureOverviewDrawerShell() {
+        if (overviewState.$overlay?.length) {
+            return overviewState.$overlay;
+        }
+        const $overlay = $(`
+            <div id="${OVERVIEW_DRAWER_ID}" class="do-health-overview">
+                <div class="do-health-overview__backdrop"></div>
+                <div class="do-health-overview__panel">
+                    <div class="do-health-overview__panel-inner">
+                        <div class="do-health-overview__panel-header">
+                            <div class="do-health-overview__panel-title">${translate("Patient Overview")}</div>
+                            <button type="button" class="do-health-overview__close" aria-label="${translate("Close")}">&times;</button>
+                        </div>
+                        <div class="do-health-overview__content"></div>
+                    </div>
+                </div>
+            </div>
+        `);
+
+        $overlay.on("click", ".do-health-overview__close, .do-health-overview__backdrop", closePatientOverviewDrawer);
+        $("body").append($overlay);
+        overviewState.$overlay = $overlay;
+        return $overlay;
+    }
+
+    function showOverviewLoading(message) {
+        ensureOverviewDrawerShell();
+        const $content = overviewState.$overlay.find(".do-health-overview__content");
+        $content.html(`
+            <div class="do-health-overview__loading">
+                <div class="spinner-border text-success spinner-border-sm" role="status"></div>
+                <span>${escapeHtml(message || translate("Loading..."))}</span>
+            </div>
+        `);
+    }
+
+    function closePatientOverviewDrawer() {
+        overviewState.isOpen = false;
+        overviewState.currentPatient = null;
+        if (overviewState.watcherUnsub) {
+            overviewState.watcherUnsub();
+            overviewState.watcherUnsub = null;
+        }
+        if (overviewState.$overlay?.length) {
+            overviewState.$overlay.removeClass("is-open");
+        }
+    }
+
+    function attachOverviewWatcher() {
+        if (overviewState.watcherUnsub || !window.do_health?.patientWatcher) return;
+        overviewState.watcherUnsub = window.do_health.patientWatcher.subscribe((payload) => {
+            if (!overviewState.isOpen) return;
+            const next = normalizePatient(payload);
+            if (!next?.patient) {
+                closePatientOverviewDrawer();
+                return;
+            }
+            if (next.patient !== overviewState.currentPatient) {
+                loadPatientOverview(next);
+            }
+        });
+    }
+
+    function escapeHtml(value) {
+        if (value == null) return "";
+        if (frappe?.utils?.escape_html) return frappe.utils.escape_html(value);
+        const div = document.createElement("div");
+        div.innerText = String(value);
+        return div.innerHTML;
     }
 
     function renderWaitingList(patients, { silent } = { silent: false }) {

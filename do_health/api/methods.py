@@ -259,7 +259,7 @@ def _build_vitals_for_appointment(appointment_name):
 	return _fetch_vitals([["docstatus", "<", 2], ["appointment", "=", appointment_name]])
 
 
-def _fetch_vitals(filter_conditions):
+def _fetch_vitals(filter_conditions, limit=3):
 	if not filter_conditions:
 		return []
 	vital_fields = [
@@ -274,7 +274,7 @@ def _fetch_vitals(filter_conditions):
 		filters=filter_conditions,
 		fields=vital_fields,
 		order_by="signs_date desc, signs_time desc, creation desc",
-		limit_page_length=3,
+		limit_page_length=limit or 3,
 	)
 	for vital in vitals:
 		vital["signs_date_label"] = _format_date(vital.get("signs_date"))
@@ -443,13 +443,166 @@ def _format_time(value):
 	if not value:
 		return ""
 	try:
-		return format_time(value)
+		return format_time(value, 'HH:mm')
 	except Exception:
 		try:
 			time_value = get_time(value)
 			return time_value.strftime("%H:%M")
 		except Exception:
 			return cstr(value)
+
+
+@frappe.whitelist()
+def get_patient_overview(patient: str, appointment: str | None = None):
+	if not patient:
+		frappe.throw(_("Patient is required"))
+
+	patient_doc = frappe.get_doc("Patient", patient)
+
+	return {
+		"patient": _build_patient_overview_header(patient_doc),
+		"contact": _build_patient_contact(patient_doc),
+		"emergency_contact": _build_emergency_contact(patient_doc),
+		"upcoming_appointment": _get_upcoming_appointment(patient_doc.name, appointment),
+		"last_encounter": _get_last_encounter(patient_doc.name),
+		"vitals": _fetch_vitals([["docstatus", "<", 2], ["patient", "=", patient_doc.name]], limit=1),
+		"counts": {
+			"appointments": frappe.db.count("Patient Appointment", {"patient": patient_doc.name}),
+			"encounters": frappe.db.count("Patient Encounter", {"patient": patient_doc.name}),
+		},
+	}
+
+
+def _calculate_age_years(dob):
+	if not dob:
+		return None
+	dob_date = getdate(dob)
+	today = getdate(nowdate())
+	return today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
+
+
+def _build_patient_overview_header(patient_doc):
+	return {
+		"name": patient_doc.name,
+		"patient_name": patient_doc.patient_name or patient_doc.name,
+		"patient_image": patient_doc.get("patient_image"),
+		"gender": patient_doc.get("sex") or patient_doc.get("gender"),
+		"age": _calculate_age_years(patient_doc.get("dob")),
+		"dob": patient_doc.get("dob"),
+		"file_number": patient_doc.get("custom_file_number") or patient_doc.get("file_number"),
+		"cpr": patient_doc.get("custom_cpr"),
+		"blood_group": patient_doc.get("blood_group"),
+		"customer": patient_doc.get("customer"),
+	}
+
+
+def _build_patient_contact(patient_doc):
+	primary_phone = patient_doc.get("mobile") or patient_doc.get("phone")
+	secondary_phone = patient_doc.get("phone") if primary_phone != patient_doc.get("phone") else None
+	return {
+		"email": patient_doc.get("email"),
+		"phone": primary_phone,
+		"secondary_phone": secondary_phone,
+		"address": patient_doc.get("primary_address") or patient_doc.get("custom_address"),
+		"language": patient_doc.get("preferred_language"),
+	}
+
+
+def _build_emergency_contact(patient_doc):
+	return {
+		"name": patient_doc.get("custom_emergency_contact_name")
+		or patient_doc.get("emergency_contact_name")
+		or patient_doc.get("next_of_kin_name"),
+		"relation": patient_doc.get("custom_emergency_contact_relation")
+		or patient_doc.get("emergency_contact_relation")
+		or patient_doc.get("next_of_kin_relation"),
+		"phone": patient_doc.get("custom_emergency_contact_phone")
+		or patient_doc.get("emergency_contact_number")
+		or patient_doc.get("mobile"),
+		"email": patient_doc.get("custom_emergency_contact_email") or patient_doc.get("emergency_email"),
+	}
+
+
+def _get_upcoming_appointment(patient_name, appointment_name=None):
+	fields = [
+		"name",
+		"status",
+		"custom_visit_status",
+		"appointment_type",
+		"appointment_date",
+		"appointment_time",
+		"duration",
+		"practitioner",
+		"practitioner_name",
+		"department",
+		"service_unit",
+		"custom_visit_reason",
+		"notes",
+		"custom_appointment_category",
+	]
+
+	def _enrich(record):
+		if not record:
+			return None
+		record["appointment_date_label"] = _format_date(record.get("appointment_date"))
+		record["appointment_time_label"] = _format_time(record.get("appointment_time"))
+		return record
+
+	if appointment_name:
+		appointment_doc = frappe.db.get_value("Patient Appointment", appointment_name, fields, as_dict=1)
+		if appointment_doc:
+			return _enrich(appointment_doc)
+
+	upcoming = frappe.get_all(
+		"Patient Appointment",
+		filters={"docstatus": ["<", 2], "patient": patient_name, "appointment_date": [">=", nowdate()]},
+		fields=fields,
+		order_by="appointment_date asc, appointment_time asc, creation asc",
+		limit_page_length=1,
+	)
+
+	if upcoming:
+		return _enrich(upcoming[0])
+
+	latest = frappe.get_all(
+		"Patient Appointment",
+		filters={"docstatus": ["<", 2], "patient": patient_name},
+		fields=fields,
+		order_by="appointment_date desc, appointment_time desc, creation desc",
+		limit_page_length=1,
+	)
+	if latest:
+		return _enrich(latest[0])
+
+	return None
+
+
+def _get_last_encounter(patient_name):
+	fields = [
+		"name",
+		"status",
+		"encounter_date",
+		"encounter_time",
+		"practitioner",
+		"practitioner_name",
+		"medical_department",
+		"appointment",
+		"appointment_type",
+		"source",
+	]
+	encounter = frappe.get_all(
+		"Patient Encounter",
+		filters={"docstatus": ["<", 2], "patient": patient_name},
+		fields=fields,
+		order_by="encounter_date desc, encounter_time desc, creation desc",
+		limit_page_length=1,
+	)
+	if not encounter:
+		return None
+	record = encounter[0]
+	record["encounter_date_label"] = _format_date(record.get("encounter_date"))
+	record["encounter_time_label"] = _format_time(record.get("encounter_time"))
+	return record
 
 
 @frappe.whitelist()
