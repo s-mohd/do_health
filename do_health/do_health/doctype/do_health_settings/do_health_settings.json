@@ -17,6 +17,7 @@
   "slot_max_time",
   "slot_label_interval",
   "slot_height",
+  "billing_override_roles",
   "action_menu_section",
   "appointment_action_menu",
   "patient_encounter_tab",
@@ -152,6 +153,13 @@
    "fieldname": "slot_height",
    "fieldtype": "Data",
    "label": "Slot Height"
+  },
+  {
+   "description": "Roles allowed to override billing rates in the billing interface. Leave empty to fall back to defaults (Can Override Billing Rate, System Manager, Healthcare Practitioner).",
+   "fieldname": "billing_override_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Billing Override Roles",
+   "options": "Role Multitable"
   }
  ],
  "grid_page_length": 50,

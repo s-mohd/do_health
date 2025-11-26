@@ -71,7 +71,7 @@ frappe.views.calendar["Patient Appointment"] = {
     },
 
     // Save filter state to localStorage
-    saveFiltersToStorage: function() {
+    saveFiltersToStorage: function () {
         const filterState = {
             resourceMode: this.state.resourceMode,
             showcancelled: this.state.showcancelled,
@@ -85,7 +85,7 @@ frappe.views.calendar["Patient Appointment"] = {
     },
 
     // Load filter state from localStorage
-    loadFiltersFromStorage: function() {
+    loadFiltersFromStorage: function () {
         try {
             const stored = localStorage.getItem(FILTER_STORAGE_KEY);
             if (stored) {
@@ -124,7 +124,7 @@ frappe.views.calendar["Patient Appointment"] = {
     },
 
     // Clear filters and restore defaults
-    clearFilters: function() {
+    clearFilters: function () {
         this.state.resourceMode = 'doctors';
         this.state.showcancelled = false;
         this.state.resourceFilters = {
@@ -136,7 +136,7 @@ frappe.views.calendar["Patient Appointment"] = {
         } catch (e) {
             console.warn('Failed to clear filter state from localStorage:', e);
         }
-        
+
         // Refresh calendar
         const calendar = cur_list?.calendar?.fullCalendar;
         if (calendar) {
@@ -145,7 +145,7 @@ frappe.views.calendar["Patient Appointment"] = {
         }
         this.updateResourceModeButtons(this.state.resourceMode);
         this.updateCancelledButtonLabel();
-        this.updateClearFiltersButton();
+        // this.updateClearFiltersButton();
         frappe.show_alert({ message: __('Filters cleared'), indicator: 'blue' });
     },
 
@@ -257,7 +257,7 @@ frappe.views.calendar["Patient Appointment"] = {
         headerToolbar: {
             left: "jumpToNow searchAppointments",
             center: "title",
-            right: "doctors rooms cancelled clearFilters toggleSide"
+            right: "doctors rooms cancelled toggleSide"
         },
 
         titleFormat: {
@@ -306,13 +306,13 @@ frappe.views.calendar["Patient Appointment"] = {
 
         resources: function (fetchInfo, successCallback, failureCallback) {
             const calendarView = frappe.views.calendar["Patient Appointment"];
-            
+
             // Ensure filters are loaded before determining resource mode
             if (!calendarView.state._filtersLoaded) {
                 calendarView.loadFiltersFromStorage();
                 calendarView.state._filtersLoaded = true;
             }
-            
+
             const mode = calendarView?.state?.resourceMode || 'doctors';
             const cacheKey = mode === 'rooms' ? 'service_unit_resources' : 'practitioner_resources';
             const cacheTime = 5 * 60 * 1000; // 5 minutes cache
@@ -413,7 +413,7 @@ frappe.views.calendar["Patient Appointment"] = {
                     cur_list.calendar.fullCalendar.setOption('filterResourcesWithEvents', false);
 
                     calendarView.updateCancelledButtonLabel();
-                    calendarView.updateClearFiltersButton();
+                    // calendarView.updateClearFiltersButton();
                     calendarView.saveFiltersToStorage();
                 }
             },
@@ -567,21 +567,21 @@ frappe.views.calendar["Patient Appointment"] = {
             render_datepicker();
             set_current_session(info.view);
             sessionStorage.server_update = 0;
-            
+
             const calendarView = frappe.views.calendar["Patient Appointment"];
-            
+
             // Load filters from localStorage on first render (if not already loaded)
             if (!calendarView.state._filtersLoaded) {
                 calendarView.loadFiltersFromStorage();
                 calendarView.state._filtersLoaded = true;
             }
-            
+
             // Apply the resource mode filter on first render
             if (!calendarView.state._filterModeApplied) {
                 calendarView.applyResourceFilterMode(calendarView.state.resourceMode);
                 calendarView.state._filterModeApplied = true;
             }
-            
+
             calendarView.state.currentView = info.view.type;
             calendarView.state.lastViewInfo = info;
             calendarView.updateResourceModeButtons(calendarView.state.resourceMode);
@@ -966,7 +966,7 @@ frappe.views.calendar["Patient Appointment"] = {
 
         this.applyResourceFilterMode(normalized);
         this.updateResourceAreaHeader();
-        this.updateClearFiltersButton();
+        // this.updateClearFiltersButton();
         this.saveFiltersToStorage();
     },
 
@@ -980,7 +980,7 @@ frappe.views.calendar["Patient Appointment"] = {
         if (mode !== 'rooms')
             this.state.resourceFilters[normalized].showAll = !this.state.resourceFilters[normalized].showAll;
         this.applyResourceFilterMode(normalized, { rerender: true });
-        this.updateClearFiltersButton();
+        // this.updateClearFiltersButton();
         this.saveFiltersToStorage();
     },
 
@@ -1035,27 +1035,27 @@ frappe.views.calendar["Patient Appointment"] = {
         this.updateToolbarButtonLabel('.fc-cancelled-button', label);
     },
 
-    isFiltersAtDefault: function() {
-        return this.state.resourceMode === 'doctors' && 
-               !this.state.showcancelled && 
-               this.state.resourceFilters.doctors.showAll;
+    isFiltersAtDefault: function () {
+        return this.state.resourceMode === 'doctors' &&
+            !this.state.showcancelled &&
+            this.state.resourceFilters.doctors.showAll;
     },
 
     updateStaticButtonLabels: function () {
         this.updateToolbarButtonLabel('.fc-toggleSide-button', '☰');
         this.updateToolbarButtonLabel('.fc-jumpToNow-button', '⏰ Now');
         this.updateToolbarButtonLabel('.fc-searchAppointments-button', '🔍 Search');
-        this.updateClearFiltersButton();
+        // this.updateClearFiltersButton();
     },
 
-    updateClearFiltersButton: function() {
+    updateClearFiltersButton: function () {
         const $clearBtn = $('.fc-clearFilters-button');
         if (!$clearBtn.length) return;
-        
+
         const isDefault = this.isFiltersAtDefault();
         $clearBtn.empty();
         $clearBtn.append(frappe.utils.icon('filter-x', 'sm'));
-        
+
         if (!isDefault) {
             // Add text when filters are not at default
             $clearBtn.prop('disabled', false);
@@ -1065,7 +1065,7 @@ frappe.views.calendar["Patient Appointment"] = {
             $clearBtn.prop('disabled', true);
             $clearBtn.addClass('fc-button-disabled');
         }
-        
+
         $clearBtn.attr('title', __('Clear filters'));
     },
 
@@ -1754,8 +1754,53 @@ frappe.views.calendar["Patient Appointment"] = {
                 trigger: 'manual',
                 content: $(`#popoverX-${event.id}`).html(),
                 html: true,
-                placement: 'auto'
+                placement: 'right',
+                container: 'body',
+                boundary: 'viewport',
+                offset: '0,8'
             });
+
+            let hideTimer = null;
+            const hoverState = { trigger: false, tip: false };
+            const clearHideTimer = () => {
+                if (hideTimer) {
+                    clearTimeout(hideTimer);
+                    hideTimer = null;
+                }
+            };
+            const scheduleHideIfIdle = () => {
+                clearHideTimer();
+                hideTimer = setTimeout(() => {
+                    if (!hoverState.trigger && !hoverState.tip) {
+                        $element.popover('hide');
+                    }
+                }, 220);
+            };
+
+            const bindPopoverHoverGuards = () => {
+                const instance = $element.data('bs.popover');
+                if (!instance) return;
+
+                const tip = (() => {
+                    if (typeof instance.getTipElement === 'function') return instance.getTipElement();
+                    if (typeof instance.tip === 'function') return instance.tip();
+                    if (instance.$tip && instance.$tip[0]) return instance.$tip[0];
+                    if (instance.tip && instance.tip.nodeType) return instance.tip;
+                    return null;
+                })();
+
+                if (!tip || tip._hoverGuardsBound || typeof tip.addEventListener !== 'function') return;
+
+                tip._hoverGuardsBound = true;
+                tip.addEventListener('mouseenter', () => {
+                    hoverState.tip = true;
+                    clearHideTimer();
+                });
+                tip.addEventListener('mouseleave', () => {
+                    hoverState.tip = false;
+                    scheduleHideIfIdle();
+                });
+            };
 
             element.addEventListener('mouseenter', function () {
                 if (calendarView.state.isPointerDown) {
@@ -1763,10 +1808,15 @@ frappe.views.calendar["Patient Appointment"] = {
                 }
                 calendarView.hideActivePopovers();
                 $element.popover('show');
+                hoverState.trigger = true;
+                clearHideTimer();
+                // Ensure bindings run after popover DOM exists
+                setTimeout(bindPopoverHoverGuards, 0);
             });
 
             element.addEventListener('mouseleave', function () {
-                $element.popover('hide');
+                hoverState.trigger = false;
+                scheduleHideIfIdle();
             });
 
             element.addEventListener('mousedown', function () {
@@ -2245,7 +2295,7 @@ function render_datepicker() {
 
         const calendarView = frappe.views.calendar["Patient Appointment"];
         const $sidebar = cur_list.$page.find(".layout-side-section .list-sidebar");
-        
+
         // Add datepicker
         $sidebar.html(function () {
             return $('<div id="monthdatepicker"></div>').datepicker({
@@ -2275,7 +2325,7 @@ function render_datepicker() {
                     if (cellType === 'day') {
                         const dateStr = moment(date).format('YYYY-MM-DD');
                         const count = window._appointmentCounts?.[dateStr] || 0;
-                        
+
                         if (count > 0) {
                             return {
                                 html: date.getDate() + `<span class="appointment-badge">${count}</span>`
@@ -2292,11 +2342,11 @@ function render_datepicker() {
         $("div.col-lg-2.layout-side-section").css('padding', '1px');
 
         calendarView?.syncDatepickerWithCalendar();
-        
+
         // Initial load of appointment badges
         const now = new Date();
         updateAppointmentBadges(now.getMonth(), now.getFullYear());
-        
+
         // Waiting list is now rendered in the health sidebar (do-health-secondary-wrapper)
     }
 }
@@ -2305,17 +2355,17 @@ function updateAppointmentBadges(month, year) {
     // Calculate start and end dates for the month
     const startDate = moment([year, month, 1]).format('YYYY-MM-DD');
     const endDate = moment([year, month]).add(1, 'month').format('YYYY-MM-DD');
-    
+
     frappe.call({
         method: 'do_health.api.methods.get_appointment_counts_for_month',
         args: {
             start_date: startDate,
             end_date: endDate
         },
-        callback: function(r) {
+        callback: function (r) {
             if (r.message) {
                 window._appointmentCounts = r.message;
-                
+
                 // Update the datepicker to show badges
                 const $picker = $('#monthdatepicker');
                 if ($picker.length) {
@@ -2431,6 +2481,26 @@ const appointmentActions = {
         let appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
         const isInsurance = (appt.custom_payment_type || '').toLowerCase().includes('insur');
 
+        const defaultOverrideRoles = ["Can Override Billing Rate", "System Manager", "Healthcare Practitioner"];
+        const fetchOverrideRoles = async () => {
+            try {
+                const { message } = await frappe.call({
+                    method: 'frappe.client.get',
+                    args: {
+                        doctype: 'Do Health Settings',
+                        name: 'Do Health Settings'
+                    }
+                });
+                const rows = message?.billing_override_roles || [];
+                const roles = rows.map(r => r.role).filter(Boolean);
+                return roles.length ? roles : defaultOverrideRoles;
+            } catch (e) {
+                return defaultOverrideRoles;
+            }
+        };
+        const allowedOverrideRoles = await fetchOverrideRoles();
+        const userCanOverride = (frappe.boot?.user?.roles || []).some(r => allowedOverrideRoles.includes(r));
+
         const dialog = new frappe.ui.Dialog({
             title: `💳 ${__('Billing')} — ${appt.patient_name}`,
             size: 'extra-large',
@@ -2474,88 +2544,88 @@ const appointmentActions = {
         });
 
         dialog.$body.html(`
-        <div class="billing-shell" style="display:flex; gap:18px; align-items:flex-start;">
-            <aside class="billing-side" style="width:320px; display:flex; flex-direction:column; gap:16px;">
-                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
-                    <h5 class="font-semibold m-0">${__('Add Item')}</h5>
-                    <div class="mt-3" style="display:flex; gap:8px; align-items:center;">
-                        <div style="flex:1;" id="bill-item-link-wrapper"></div>
-                        <div style="width:110px; margin-top:10px;">
-                            <input type="number" id="bill-item-qty" class="form-control" min="1" step="1" value="1" />
-                        </div>
-                        <div style="margin-top:10px;">
-                            <button class="btn btn-primary" id="bill-add-item">${__('Add')}</button>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;">
-                    <div>
-                        <label class="form-label text-muted small mb-1">${__('Payment Type')}</label>
-                        <select id="payment-type-select" class="form-control">
-                            <option value="Self Payment">${__('Self Payment')}</option>
-                            <option value="Insurance">${__('Insurance')}</option>
-                        </select>
-                    </div>
-                    <div style="height:1px;background:#f1f5f9;"></div>
-                    <div>
-                        <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
-                            <span class="font-semibold">${__('Insurance Policy')}</span>
-                            <button class="btn btn-sm btn-outline-primary" id="btn-manage-policy">${__('Manage')}</button>
-                        </div>
-                        <div id="policy-summary" class="text-sm text-muted mt-2">${__('Loading...')}</div>
-                    </div>
-                </section>
-            </aside>
-
-            <section class="billing-main" style="flex:1; display:flex; flex-direction:column; gap:16px;">
-                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
-                    <div class="flex items-center justify-between flex-wrap" style="gap:8px;">
-                        <h5 class="font-semibold m-0">${__('Appointment Items')}</h5>
-                        <span class="badge badge-${isInsurance ? 'info' : 'secondary'}">
-                            ${isInsurance ? __('Insurance') : __('Self Payment')}
-                        </span>
-                    </div>
-                    <div id="bill-items-table" class="table-responsive mt-3"></div>
-                </section>
-
-                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
-                    <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
-                        <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                            <div class="text-sm text-muted mb-1">${__('Patient Invoice')}</div>
-                            <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
-                                <span id="patient-invoice-link" class="font-medium"></span>
-                                <button class="btn btn-sm btn-outline-primary" id="btn-record-payment">${__('Record Payment')}</button>
+            <div class="billing-shell" style="display:flex; gap:18px; align-items:flex-start;">
+                <aside class="billing-side" style="width:320px; display:flex; flex-direction:column; gap:16px;">
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <h5 class="font-semibold m-0">${__('Add Item')}</h5>
+                        <div class="mt-3" style="display:flex; gap:8px; align-items:center;">
+                            <div style="flex:1;" id="bill-item-link-wrapper"></div>
+                            <div style="width:110px; margin-top:10px;">
+                                <input type="number" id="bill-item-qty" class="form-control" min="1" step="1" value="1" />
                             </div>
-                            <div class="text-sm text-muted mt-2">${__('Outstanding')}: <span id="patient-outstanding">0.00</span></div>
-                        </div>
-                        ${isInsurance ? `
-                        <div class="rounded-lg p-3" id="insurance-claim-card" style="border:1px solid #e5e7eb;">
-                            <div class="text-sm text-muted mb-1">${__('Insurance Claim')}</div>
-                            <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
-                                <span id="insurance-claim-summary" class="text-muted">${__('No claim yet')}</span>
-                                <button class="btn btn-sm btn-warning" disabled id="btn-insurance-claim">${__('Submit Claim')}</button>
+                            <div style="margin-top:10px;">
+                                <button class="btn btn-primary" id="bill-add-item">${__('Add')}</button>
                             </div>
-                        </div>` : ''}
-                    </div>
-                </section>
-
-                <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
-                    <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
-                        <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                            <div class="text-sm text-muted mb-1">${__('Patient Billing Status')}</div>
-                            <div id="patient-status" class="badge badge-secondary">Loading...</div>
                         </div>
-                        ${isInsurance ? `
-                        <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
-                            <div class="text-sm text-muted mb-1">${__('Insurance Claim Status')}</div>
-                            <div id="insurance-status" class="badge badge-info">Loading...</div>
-                        </div>` : ''}
-                    </div>
+                    </section>
+
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+                        <div>
+                            <label class="form-label text-muted small mb-1">${__('Payment Type')}</label>
+                            <select id="payment-type-select" class="form-control">
+                                <option value="Self Payment">${__('Self Payment')}</option>
+                                <option value="Insurance">${__('Insurance')}</option>
+                            </select>
+                        </div>
+                        <div style="height:1px;background:#f1f5f9;"></div>
+                        <div>
+                            <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                <span class="font-semibold">${__('Insurance Policy')}</span>
+                                <button class="btn btn-sm btn-outline-primary" id="btn-manage-policy">${__('Manage')}</button>
+                            </div>
+                            <div id="policy-summary" class="text-sm text-muted mt-2">${__('Loading...')}</div>
+                        </div>
+                    </section>
+                </aside>
+
+                <section class="billing-main" style="flex:1; display:flex; flex-direction:column; gap:16px;">
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <div class="flex items-center justify-between flex-wrap" style="gap:8px;">
+                            <h5 class="font-semibold m-0">${__('Appointment Items')}</h5>
+                            <span class="badge badge-${isInsurance ? 'info' : 'secondary'}">
+                                ${isInsurance ? __('Insurance') : __('Self Payment')}
+                            </span>
+                        </div>
+                        <div id="bill-items-table" class="table-responsive mt-3"></div>
+                    </section>
+
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
+                            <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Patient Invoice')}</div>
+                                <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                    <span id="patient-invoice-link" class="font-medium"></span>
+                                    <button class="btn btn-sm btn-outline-primary" id="btn-record-payment">${__('Record Payment')}</button>
+                                </div>
+                                <div class="text-sm text-muted mt-2">${__('Outstanding')}: <span id="patient-outstanding">0.00</span></div>
+                            </div>
+                            ${isInsurance ? `
+                            <div class="rounded-lg p-3" id="insurance-claim-card" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Insurance Claim')}</div>
+                                <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                    <span id="insurance-claim-summary" class="text-muted">${__('No claim yet')}</span>
+                                    <button class="btn btn-sm btn-warning" disabled id="btn-insurance-claim">${__('Submit Claim')}</button>
+                                </div>
+                            </div>` : ''}
+                        </div>
+                    </section>
+
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
+                            <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Patient Billing Status')}</div>
+                                <div id="patient-status" class="badge badge-secondary">Loading...</div>
+                            </div>
+                            ${isInsurance ? `
+                            <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Insurance Claim Status')}</div>
+                                <div id="insurance-status" class="badge badge-info">Loading...</div>
+                            </div>` : ''}
+                        </div>
+                    </section>
                 </section>
-            </section>
-        </div>
-    `);
+            </div>
+        `);
 
         dialog.show();
 
@@ -2660,6 +2730,13 @@ const appointmentActions = {
             await frappe.call({
                 method: 'do_health.api.methods.update_item_qty_in_appointment',
                 args: { rowname, qty },
+            });
+        }
+
+        async function updateAppointmentItemOverride(rowname, rate, reason) {
+            await frappe.call({
+                method: 'do_health.api.methods.update_item_override',
+                args: { rowname, rate, reason }
             });
         }
 
@@ -2893,6 +2970,7 @@ const appointmentActions = {
                         <th>${__('Item')}</th>
                         <th>${__('Qty')}</th>
                         <th>${__('Rate')}</th>
+                        <th>${__('Override')}</th>
                         <th>${__('Patient')}</th>
                         <th>${__('Insurance')}</th>
                         <th>${__('Total')}</th>
@@ -2901,17 +2979,45 @@ const appointmentActions = {
                         <th>${__('Item')}</th>
                         <th>${__('Qty')}</th>
                         <th>${__('Rate')}</th>
+                        <th>${__('Override')}</th>
                         <th>${__('Total')}</th>
                         <th></th>`;
 
                 const bodyRows = message.rows.map(r => {
                     const qtyInput = `<input type="number" min="1" step="1" class="form-control form-control-sm js-qty" value="${r.qty}">`;
+                    const overrideBadge = r.override_rate ? `<span class="badge badge-warning ml-1">${__('Override')}</span>` : '';
+                    const baseRateNote = r.base_rate && r.override_rate
+                        ? `<div class="text-muted small">${__('Base')}: ${format_currency(r.base_rate || 0, currency)}</div>`
+                        : '';
+                    const overrideMeta = r.override_by
+                        ? `<div class="text-muted small">${__('By')}: ${frappe.utils.escape_html(r.override_by)}</div>`
+                        : '';
+                    const overrideReason = r.override_reason
+                        ? `<div class="text-muted small">${frappe.utils.escape_html(r.override_reason)}</div>`
+                        : '';
+                    const rateLabel = `
+                        <div>${format_currency(r.rate || 0, currency)} ${overrideBadge}</div>
+                        ${baseRateNote}
+                        ${overrideMeta}
+                        ${overrideReason}
+                    `;
+                    const overrideControl = userCanOverride
+                        ? `
+                            <div class="input-group input-group-sm">
+                                <input type="number" min="0" step="0.01" class="form-control form-control-sm js-override" value="${r.override_rate || ''}" placeholder="${format_currency(r.rate || 0, currency)}">
+                                <div class="input-group-append">
+                                    <button class="btn btn-outline-secondary btn-sm js-clear-override" type="button">&times;</button>
+                                </div>
+                            </div>`
+                        : (r.override_rate ? format_currency(r.override_rate, currency) : '—');
+
                     if (isInsurancePayment) {
                         return `
                             <tr data-row="${r.name}">
                                 <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
                                 <td>${qtyInput}</td>
-                                <td>${format_currency(r.rate || 0, currency)}</td>
+                                <td>${rateLabel}</td>
+                                <td>${overrideControl}</td>
                                 <td>${format_currency(r.patient_share || 0, currency)}</td>
                                 <td>${format_currency(r.insurance_share || 0, currency)}</td>
                                 <td>${format_currency(r.amount || 0, currency)}</td>
@@ -2924,7 +3030,8 @@ const appointmentActions = {
                         <tr data-row="${r.name}">
                             <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
                             <td>${qtyInput}</td>
-                            <td>${format_currency(r.rate || 0, currency)}</td>
+                            <td>${rateLabel}</td>
+                            <td>${overrideControl}</td>
                             <td>${format_currency(r.amount || 0, currency)}</td>
                             <td class="text-center">
                                 <button class="btn btn-xs btn-danger js-del">&times;</button>
@@ -2935,7 +3042,7 @@ const appointmentActions = {
                 const totalsRow = isInsurancePayment
                     ? `
                         <tr class="table-total" style="background:#f8fafc;">
-                            <td colspan="3" class="text-right font-weight-bold">${__('Totals')}</td>
+                            <td colspan="4" class="text-right font-weight-bold">${__('Totals')}</td>
                             <td class="font-weight-bold">${format_currency(message.totals.patient || 0, currency)}</td>
                             <td class="font-weight-bold">${format_currency(message.totals.insurance || 0, currency)}</td>
                             <td class="font-weight-bold">${format_currency(message.totals.grand || 0, currency)}</td>
@@ -2943,7 +3050,7 @@ const appointmentActions = {
                         </tr>`
                     : `
                         <tr class="table-total" style="background:#f8fafc;">
-                            <td colspan="3" class="text-right font-weight-bold">${__('Totals')}</td>
+                            <td colspan="4" class="text-right font-weight-bold">${__('Totals')}</td>
                             <td class="font-weight-bold">${format_currency(message.totals.grand || 0, currency)}</td>
                             <td></td>
                         </tr>`;
@@ -2971,6 +3078,37 @@ const appointmentActions = {
                     tr.querySelector('.js-qty').addEventListener('change', async (e) => {
                         const q = cint(e.target.value || 1);
                         await updateAppointmentItemQty(rowname, q);
+                        await refreshAppointmentItemsUI(appt.name);
+                    });
+                    tr.querySelector('.js-override')?.addEventListener('change', async (e) => {
+                        if (!userCanOverride) return;
+                        const val = flt(e.target.value || 0);
+                        if (val <= 0) {
+                            await updateAppointmentItemOverride(rowname, 0, null);
+                            await refreshAppointmentItemsUI(appt.name);
+                            return;
+                        }
+                        frappe.prompt(
+                            [
+                                {
+                                    fieldtype: 'Small Text',
+                                    fieldname: 'reason',
+                                    label: __('Override Reason'),
+                                    reqd: 0
+                                }
+                            ],
+                            async (values) => {
+                                await updateAppointmentItemOverride(rowname, val, values?.reason || '');
+                                await refreshAppointmentItemsUI(appt.name);
+                            },
+                            __('Confirm Override')
+                        );
+                    });
+                    tr.querySelector('.js-clear-override')?.addEventListener('click', async () => {
+                        if (!userCanOverride) return;
+                        const input = tr.querySelector('.js-override');
+                        if (input) input.value = '';
+                        await updateAppointmentItemOverride(rowname, 0, null);
                         await refreshAppointmentItemsUI(appt.name);
                     });
                 });
@@ -3134,7 +3272,7 @@ const appointmentActions = {
         // Inside refreshAppointmentItemsUI
         const patientStatusEl = el.querySelector('#patient-status');
         if (patientStatusEl) {
-            const status = apptDoc.custom_billing_status || __('Not Billed');
+            const status = appt.custom_billing_status || __('Not Billed');
             patientStatusEl.textContent = status;
             const map = {
                 'Paid': 'success',
@@ -3148,7 +3286,7 @@ const appointmentActions = {
 
         const insuranceStatusEl = el.querySelector('#insurance-status');
         if (insuranceStatusEl) {
-            const status = isInsurancePayment ? (apptDoc.custom_insurance_status || __('Not Claimed')) : __('N/A');
+            const status = isInsurancePayment ? (appt.custom_insurance_status || __('Not Claimed')) : __('N/A');
             insuranceStatusEl.textContent = status;
             const map = {
                 'Claimed': 'info',
@@ -4752,4 +4890,9 @@ const enhancedStyles = `
 // Inject styles
 $(document).ready(function () {
     $('head').append(enhancedStyles);
+    $('.do-health-secondary-toggle').on('click', () => {
+        setTimeout(() => {
+            window.dispatchEvent(new Event('resize'));
+        }, 300);
+    });
 });

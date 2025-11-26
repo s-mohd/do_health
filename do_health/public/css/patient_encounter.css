@@ -1,8 +1,9 @@
 /* Encounter Layout */
 .encounter-layout {
     display: flex;
-    gap: 1.5rem;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 1.1rem;
+    align-items: stretch;
     width: 100%;
     position: relative;
 }
@@ -11,6 +12,9 @@
 .encounter-layout .layout-main-section {
     flex: 1 1 auto;
     min-width: 0;
+    float: none;
+    max-width: 100%;
+    width: 100%;
 }
 
 .encounter-surface {
@@ -22,13 +26,25 @@
 }
 
 .encounter-side-panel {
-    flex: 0 0 360px;
-    max-width: 360px;
-    width: 100%;
-    position: sticky;
-    top: 200px;
-    align-self: flex-start;
-    height: fit-content;
+    width: min(420px, calc(100% - 24px));
+    max-width: 100%;
+    position: fixed;
+    right: 12px;
+    top: 120px;
+    height: auto;
+    max-height: calc(100vh - 150px);
+    align-self: stretch;
+    z-index: 1052;
+    transform: translateX(110%);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+.encounter-side-panel.is-open-floating {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .encounter-panel-top {
@@ -49,6 +65,67 @@
     box-shadow: 0 6px 18px rgba(15, 23, 42, 0.25);
     border-radius: 999px;
     display: none;
+}
+
+.encounter-mobile-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.35);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1050;
+    backdrop-filter: blur(1px);
+}
+
+.encounter-mobile-overlay.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+body.encounter-overlay-open {
+    overflow: hidden;
+}
+
+.encounter-tab-body {
+    display: flex;
+    flex-direction: column;
+}
+
+@media (max-width: 1440px) {
+    .encounter-layout {
+        gap: 1rem;
+    }
+
+    .encounter-side-panel {
+        top: 124px;
+    }
+}
+
+@media (max-width: 1280px) {
+    .encounter-side-panel {
+        position: fixed;
+        top: 96px;
+        right: 12px;
+        width: min(420px, calc(100% - 24px));
+        max-width: 100%;
+        height: calc(100vh - 130px);
+        max-height: calc(100vh - 130px);
+        overflow: hidden;
+        transform: translateX(110%);
+        opacity: 0;
+        transition: transform 0.25s ease, opacity 0.2s ease;
+        z-index: 1052;
+    }
+
+    .encounter-side-panel.is-open-mobile {
+        transform: translateX(0);
+        opacity: 1;
+    }
+
+    .encounter-tab-body {
+        height: 100%;
+    }
 }
 
 .encounter-layout.panel-collapsed .encounter-side-panel {

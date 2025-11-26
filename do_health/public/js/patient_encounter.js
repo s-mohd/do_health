@@ -173,6 +173,10 @@ do_health.encounter_sidebar = {
 
 		const $layoutRef = $panel.closest('.encounter-layout');
 		this.update_toggle_labels(collapsed);
+		this.setup_responsive_drawers(frm, $layoutRef, $panel);
+
+		// Respect persisted open/closed state; default to closed to reduce crowding
+		this.set_panel_open($panel, !collapsed, { skipPersist: true });
 
 		if (tabs.length) {
 			(async () => {
@@ -238,6 +242,68 @@ do_health.encounter_sidebar = {
 			$panel = $('<div class="encounter-side-panel"></div>').appendTo($layout);
 		}
 		return $panel;
+	},
+
+	set_panel_open($panel, open, opts = {}) {
+		if (!$panel?.length) return;
+		const $layout = $panel.closest('.encounter-layout');
+		const $overlay = $('.encounter-mobile-overlay');
+		const $timeline = $('.layout-side-section');
+		const isMobile = window.matchMedia('(max-width: 1280px)').matches;
+
+		$panel.toggleClass('is-open-floating', !!open);
+		$panel.toggleClass('is-open-mobile', !!open && isMobile);
+		$layout.toggleClass('panel-collapsed', !open);
+		if (!opts.skipPersist) {
+			this.persist_panel_collapsed(!open);
+		}
+		this.update_toggle_labels(!open);
+
+		// Close timeline when opening panel
+		if (open) {
+			$timeline.removeClass('is-open-mobile');
+		}
+
+		const showOverlay = !!open || $timeline.hasClass('is-open-mobile');
+		$overlay.toggleClass('show', showOverlay);
+		$('body').toggleClass('encounter-overlay-open', showOverlay);
+	},
+
+	setup_responsive_drawers(frm, $layout, $panel) {
+		if (!$layout?.length || !$panel?.length) return;
+
+		const $wrapper = $(frm.$wrapper);
+		const $timeline = $wrapper.find('.layout-side-section');
+		const $layoutRef = $panel.closest('.encounter-layout');
+
+		$('body').removeClass('encounter-overlay-open');
+
+		const hasTimeline = $timeline.length > 0;
+		const $overlay = $('<div class="encounter-mobile-overlay"></div>').appendTo($wrapper);
+
+		const updateOverlay = () => {
+			const open = $panel.hasClass('is-open-mobile') || $panel.hasClass('is-open-floating') || (hasTimeline && $timeline.hasClass('is-open-mobile'));
+			$overlay.toggleClass('show', open);
+			$('body').toggleClass('encounter-overlay-open', open);
+		};
+
+		const closeAll = () => {
+			this.set_panel_open($panel, false, { skipPersist: true });
+			if (hasTimeline) $timeline.removeClass('is-open-mobile');
+			updateOverlay();
+		};
+
+		$overlay.on('click', closeAll);
+
+		const handleResize = () => {
+			if (window.matchMedia('(min-width: 1281px)').matches) {
+				closeAll();
+			}
+		};
+
+		handleResize();
+		$(window).off('resize.encounterResponsive')
+			.on('resize.encounterResponsive', (frappe.utils?.debounce || ((fn) => fn))(handleResize, 150));
 	},
 
 	async get_meta_safe(doctype) {
@@ -1144,9 +1210,11 @@ $(document).on('click', '.visit-section__header', (event) => {
 $(document).on('click', '.encounter-panel-toggle-banner', () => {
 	const $layout = $('.encounter-layout').first();
 	if (!$layout.length) return;
-	const nextState = !$layout.hasClass('panel-collapsed');
-	do_health.encounter_sidebar.apply_panel_state($layout, nextState);
-	do_health.encounter_sidebar.persist_panel_collapsed(nextState);
+	const $panel = $layout.find('.encounter-side-panel');
+	if ($panel.length) {
+		const open = $panel.hasClass('is-open-floating') || $panel.hasClass('is-open-mobile');
+		do_health.encounter_sidebar.set_panel_open($panel, !open);
+	}
 });
 
 let lastBannerCreatedAt = 0;
@@ -1619,6 +1687,7 @@ frappe.ui.form.on('Patient Encounter', {
 	refresh(frm) {
 		$(".do-health-patient-banner").remove();
 		$(".encounter-side-panel").remove();
+		$('body').removeClass('encounter-overlay-open');
 		do_health.encounter_sidebar.init(frm);
 	},
 	patient(frm) {
@@ -1629,6 +1698,7 @@ frappe.ui.form.on('Patient Encounter', {
 		else {
 			$(".do-health-patient-banner").remove();
 			$(".encounter-side-panel").remove();
+			$('body').removeClass('encounter-overlay-open');
 		}
 	}
 });

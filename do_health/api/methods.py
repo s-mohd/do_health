@@ -28,6 +28,7 @@ import base64
 import re
 from collections import defaultdict
 import json
+from do_health.do_health.doctype.patient_relationship.patient_relationship import _get_inverse_label
 from healthcare.healthcare.doctype.patient_insurance_policy.patient_insurance_policy import (
 	get_insurance_price_lists,
 	is_insurance_policy_valid,
@@ -470,6 +471,7 @@ def get_patient_overview(patient: str, appointment: str | None = None):
 			"appointments": frappe.db.count("Patient Appointment", {"patient": patient_doc.name}),
 			"encounters": frappe.db.count("Patient Encounter", {"patient": patient_doc.name}),
 		},
+		"relations": _get_patient_relations(patient_doc),
 	}
 
 
@@ -485,11 +487,11 @@ def _build_patient_overview_header(patient_doc):
 	return {
 		"name": patient_doc.name,
 		"patient_name": patient_doc.patient_name or patient_doc.name,
-		"patient_image": patient_doc.get("patient_image"),
-		"gender": patient_doc.get("sex") or patient_doc.get("gender"),
+		"patient_image": patient_doc.get("image"),
+		"gender": patient_doc.get("sex"),
 		"age": _calculate_age_years(patient_doc.get("dob")),
 		"dob": patient_doc.get("dob"),
-		"file_number": patient_doc.get("custom_file_number") or patient_doc.get("file_number"),
+		"file_number": patient_doc.get("custom_file_number"),
 		"cpr": patient_doc.get("custom_cpr"),
 		"blood_group": patient_doc.get("blood_group"),
 		"customer": patient_doc.get("customer"),
@@ -521,6 +523,170 @@ def _build_emergency_contact(patient_doc):
 		or patient_doc.get("mobile"),
 		"email": patient_doc.get("custom_emergency_contact_email") or patient_doc.get("emergency_email"),
 	}
+
+
+def _get_patient_relations(patient_doc):
+	relations = _fetch_relationships(patient_doc.name)
+	if relations:
+		return relations
+
+	# Fallback to legacy child table on Patient
+	return _build_relations_from_child_table(patient_doc)
+
+
+def _fetch_relationships(patient_name: str) -> list[dict]:
+	fields = ["name", "patient", "related_patient", "relation", "inverse_relation", "notes"]
+	forward = frappe.get_all(
+		"Patient Relationship",
+		filters={"patient": patient_name},
+		fields=fields,
+	)
+	reverse = frappe.get_all(
+		"Patient Relationship",
+		filters={"related_patient": patient_name},
+		fields=fields,
+	)
+
+	if not forward and not reverse:
+		return []
+
+	def _collect(rows, swap=False):
+		items = []
+		for row in rows:
+			other_id = row.related_patient if not swap else row.patient
+			if not other_id:
+				continue
+			label = row.relation if not swap else (row.inverse_relation or _get_inverse_label(row.relation))
+			items.append(
+				{
+					"source": row.patient if not swap else row.related_patient,
+					"patient": other_id,
+					"relation": label,
+					"description": row.notes,
+				}
+			)
+		return items
+
+	combined = _collect(forward) + _collect(reverse, swap=True)
+
+	# Deduplicate on patient + relation
+	seen = set()
+	unique = []
+	for row in combined:
+		key = (row["patient"], row.get("relation") or "")
+		if key in seen:
+			continue
+		seen.add(key)
+		unique.append(row)
+
+	details = {}
+	if unique:
+		ids = [row["patient"] for row in unique]
+		details = {
+			row.name: row
+			for row in frappe.get_all(
+				"Patient",
+				fields=[
+					"name",
+					"patient_name",
+					"sex",
+					"dob",
+					"image",
+					"custom_file_number",
+					"custom_cpr",
+				],
+				filters={"name": ["in", ids]},
+			)
+		}
+
+	for row in unique:
+		patient_detail = details.get(row["patient"], {})
+		row.update(
+			{
+				"patient_name": patient_detail.get("patient_name") or row["patient"],
+				"gender": patient_detail.get("sex"),
+				"dob": patient_detail.get("dob"),
+				"age": _calculate_age_years(patient_detail.get("dob")),
+				"patient_image": patient_detail.get("image"),
+				"file_number": patient_detail.get("custom_file_number"),
+				"cpr": patient_detail.get("custom_cpr"),
+			}
+		)
+
+	return unique
+
+
+def _build_relations_from_child_table(patient_doc):
+	relations = patient_doc.get("patient_relation") or []
+	if not relations:
+		return []
+
+	patient_ids = [row.patient for row in relations if row.patient]
+	patient_details = {}
+
+	if patient_ids:
+		patient_details = {
+			row.name: row
+			for row in frappe.get_all(
+				"Patient",
+				fields=[
+					"name",
+					"patient_name",
+					"sex",
+					"gender",
+					"dob",
+					"image",
+					"custom_file_number",
+					"custom_cpr",
+				],
+				filters={"name": ["in", patient_ids]},
+			)
+		}
+
+	output = []
+	for row in relations:
+		if not row.patient:
+			continue
+
+		details = patient_details.get(row.patient, {})
+		output.append(
+			{
+				"patient": row.patient,
+				"relation": row.relation,
+				"description": row.description,
+				"patient_name": details.get("patient_name") or row.patient,
+				"gender": details.get("sex"),
+				"dob": details.get("dob"),
+				"age": _calculate_age_years(details.get("dob")),
+				"patient_image": details.get("image"),
+				"file_number": details.get("custom_file_number"),
+				"cpr": details.get("custom_cpr"),
+			}
+		)
+
+	return output
+
+
+@frappe.whitelist()
+def create_patient_relationship(patient: str, related_patient: str, relation: str, notes: str | None = None):
+	if not patient or not related_patient:
+		frappe.throw(_("Patient and related patient are required"))
+
+	if patient == related_patient:
+		frappe.throw(_("You cannot relate a patient to themselves."))
+
+	relation_value = (relation or "").strip()
+	if not relation_value:
+		frappe.throw(_("Relation is required"))
+
+	doc = frappe.new_doc("Patient Relationship")
+	doc.patient = patient
+	doc.related_patient = related_patient
+	doc.relation = relation_value
+	doc.notes = notes
+	doc.insert()
+
+	return {"name": doc.name}
 
 
 def _get_upcoming_appointment(patient_name, appointment_name=None):
@@ -1280,6 +1446,8 @@ def get_waiting_list():
 			pa.practitioner,
 			pa.practitioner_name,
 			pa.custom_visit_status,
+			pa.custom_appointment_category,
+			pa.custom_past_appointment,
 			at.arrival_time,
 			pa.appointment_time,
 			pa.appointment_date
@@ -1323,6 +1491,23 @@ def remove_item_from_appointment(rowname):
 def update_item_qty_in_appointment(rowname, qty: int):
 	child = frappe.get_doc("Appointment Billing Items", rowname)
 	child.qty = flt(qty or 1)
+	child.save(ignore_permissions=True)
+	frappe.db.commit()
+	return child.parent
+
+@frappe.whitelist()
+def update_item_override(rowname, rate: float = None, reason: str = None):
+	"""Set or clear a per-row override rate."""
+	allowed_roles = _get_billing_override_roles()
+	user_roles = set(frappe.get_roles(frappe.session.user))
+	if not (user_roles & set(allowed_roles)):
+		frappe.throw(_("You are not allowed to override billing rates."))
+
+	child = frappe.get_doc("Appointment Billing Items", rowname)
+	value = flt(rate or 0)
+	child.override_rate = value
+	child.override_reason = reason or None
+	child.override_by = frappe.session.user if value > 0 else None
 	child.save(ignore_permissions=True)
 	frappe.db.commit()
 	return child.parent
@@ -1606,6 +1791,22 @@ def _get_item_rate(item_code, price_list, currency=None):
 		pass
 	return flt(rate, 2)
 
+def _get_row_rate(row, price_list, currency=None):
+	"""Return the effective rate for a billing row, honoring overrides."""
+	override = flt(getattr(row, "override_rate", 0) or 0)
+	if override > 0:
+		return override
+	return _get_item_rate(row.item_code, price_list, currency)
+
+def _get_billing_override_roles():
+	defaults = {"Can Override Billing Rate", "System Manager", "Healthcare Practitioner"}
+	try:
+		settings = frappe.get_cached_doc("Do Health Settings")
+		custom_roles = {r.role for r in getattr(settings, "billing_override_roles", []) if getattr(r, "role", None)}
+		return custom_roles or defaults
+	except Exception:
+		return defaults
+
 def _coverage_split(patient_name, item_code, unit_rate, qty, appointment_date=None, company=None):
 	"""Split total between patient and insurance using active Patient Insurance Policy."""
 	total = flt(unit_rate) * flt(qty)
@@ -1671,7 +1872,8 @@ def get_appointment_items_snapshot(appointment_id):
 	company = getattr(appt, "company", None)
 
 	for r in appt.get("custom_billing_items") or []:
-		unit_rate = _get_item_rate(r.item_code, price_list, currency)
+		base_rate = _get_item_rate(r.item_code, price_list, currency)
+		unit_rate = _get_row_rate(r, price_list, currency)
 		qty = flt(r.qty or 1)
 
 		if is_insurance:
@@ -1693,6 +1895,10 @@ def get_appointment_items_snapshot(appointment_id):
 			"item_name": r.item_name or frappe.db.get_value("Item", r.item_code, "item_name"),
 			"qty": qty,
 			"rate": unit_rate,
+			"base_rate": base_rate,
+			"override_rate": r.override_rate,
+			"override_reason": r.override_reason,
+			"override_by": r.override_by,
 			"patient_share": patient_share,
 			"insurance_share": insurance_share,
 			"amount": flt(patient_share + insurance_share, 2),
@@ -1790,7 +1996,7 @@ def create_invoices_for_appointment(appointment_id, submit_invoice: int = 0):
 
 	for r in appt.custom_billing_items:
 		qty = flt(r.qty or 1)
-		unit_rate = _get_item_rate(r.item_code, price_list, currency)
+		unit_rate = _get_row_rate(r, price_list, currency)
 
 		if is_insurance:
 			patient_share, insurance_share = _coverage_split(

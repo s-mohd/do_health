@@ -180,6 +180,7 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
 
     background: var(--do-health-panel);
     border: 1px solid var(--do-health-border);
+    overflow-y: auto;
 }
 
 .do-health-secondary-toggle {
@@ -420,9 +421,8 @@ body:not(.do-health-sidebar-active) #do-health-sidebar {
     font-size: 18px;
     opacity: 0.8;
     transition: opacity 0.2s ease;
-    position: absolute;
-    top: 0.75rem;
-    right: 1rem;
+    position: relative;
+    top: -1.1rem;
 }
 
 .do-health-selected__empty {
@@ -710,7 +710,8 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     #do-health-sidebar {
         position: absolute;
         z-index: 200;
-        height: 100%;
+        height: calc(100% - 48px);
+        top: 48px;
         transition: transform 0.3s ease;
     }
 
@@ -868,7 +869,7 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     font-weight: 800;
 }
 
-/* --- Patient Overview Drawer --- */
+/* --- Patient Overview Drawer (New, close to reference UI) --- */
 .do-health-overview {
     position: fixed;
     inset: 0;
@@ -879,7 +880,8 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     pointer-events: none;
     transition: opacity 0.25s ease;
     z-index: 1060;
-    font-family: "Manrope", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-family: "Inter", "Manrope", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
     letter-spacing: 0.01em;
 }
 
@@ -890,13 +892,14 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 
 .do-health-overview__backdrop {
     flex: 1;
-    background: rgba(15, 23, 42, 0.28);
+    background: rgba(15, 23, 42, 0.25);
     backdrop-filter: blur(3px);
 }
 
+/* Sliding panel */
 .do-health-overview__panel {
-    width: 680px;
-    max-width: 98vw;
+    width: 720px;
+    max-width: 96vw;
     transform: translateX(100%);
     transition: transform 0.28s ease;
 }
@@ -907,42 +910,54 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 
 .do-health-overview__panel-inner {
     height: 100%;
-    background: linear-gradient(180deg, #f7f9fb 0%, #ffffff 45%);
+    background: #f1f5f9;
     border-left: 1px solid var(--do-health-border);
-    box-shadow: -8px 0 22px rgba(15, 23, 42, 0.1);
-    padding: 18px;
-    gap: 16px;
+    box-shadow: -12px 0 32px rgba(15, 23, 42, 0.16);
+    padding: 24px 24px 20px;
     overflow-y: auto;
-}
-
-.do-health-overview__panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-
-.do-health-overview__panel-title {
-    font-weight: 800;
-    color: var(--do-health-text);
-    font-size: 15px;
-}
-
-.do-health-overview__close {
-    border: none;
-    background: rgba(15, 23, 42, 0.05);
-    border-radius: 10px;
-    width: 32px;
-    height: 32px;
-    font-size: 18px;
-    line-height: 1;
-    cursor: pointer;
 }
 
 .do-health-overview__content {
     display: flex;
     flex-direction: column;
     gap: 16px;
+}
+
+.do-health-overview__panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--do-health-border);
+}
+
+.do-health-overview__panel-title {
+    font-weight: 700;
+    color: var(--do-health-text-muted);
+    font-size: 13px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.do-health-overview__close {
+    border: none;
+    background: rgba(148, 163, 184, 0);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--do-health-text-muted);
+    cursor: pointer;
+}
+
+.do-health-overview__close:hover {
+    background: rgba(148, 163, 184, 0.26);
 }
 
 .do-health-overview__loading {
@@ -953,23 +968,69 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     color: var(--do-health-text-muted);
 }
 
-.do-health-overview__hero {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 10px;
+/* Header strip + hero */
+.do-health-overview__header {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.do-health-overview__header-top {
+    display: flex;
     align-items: center;
-    padding: 12px;
+    justify-content: space-between;
+}
+
+.do-health-overview__header-title {
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--do-health-text);
+}
+
+.do-health-overview__header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.do-health-overview__icon-btn {
+    border: none;
+    background: rgba(148, 163, 184, 0.12);
+    border-radius: 999px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--do-health-text-muted);
+    cursor: pointer;
+}
+
+/* Main hero card */
+.do-health-overview__hero-card,
+.do-health-overview__hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: #ffffff;
     border: 1px solid var(--do-health-border);
-    border-radius: 14px;
-    background: linear-gradient(120deg, rgba(22, 163, 74, 0.12), rgba(34, 197, 94, 0.05));
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+}
+
+.do-health-overview__hero-main {
+    display: flex;
+    gap: 12px;
+    align-items: center;
 }
 
 .do-health-overview__avatar {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
-    background: rgba(22, 163, 74, 0.12);
+    border-radius: 16px;
+    background: #e2f3eb;
     border: 1px solid rgba(22, 163, 74, 0.3);
     display: flex;
     align-items: center;
@@ -977,6 +1038,8 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     font-weight: 700;
     color: var(--do-health-text);
     overflow: hidden;
+    font-size: 18px;
+    text-transform: uppercase;
 }
 
 .do-health-overview__avatar img {
@@ -985,21 +1048,8 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     object-fit: cover;
 }
 
-.do-health-overview__hero-text {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.do-health-overview__eyebrow {
-    font-size: 11px;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    color: var(--do-health-text-muted);
-}
-
 .do-health-overview__name {
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 800;
     color: var(--do-health-text);
 }
@@ -1009,6 +1059,7 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     font-size: 12px;
 }
 
+/* Chips for file/CPR/contact */
 .do-health-overview__chip-row {
     display: flex;
     flex-wrap: wrap;
@@ -1020,72 +1071,88 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(15, 23, 42, 0.05);
+    background: #f8fafc;
     color: var(--do-health-text);
-    padding: 6px 10px;
+    padding: 5px 10px;
     border-radius: 999px;
     font-size: 11px;
     border: 1px solid var(--do-health-border);
 }
 
 .do-health-overview__chip.link {
+    background: #ffffff;
     text-decoration: none;
-    color: var(--do-health-text);
-    background: #fff;
 }
 
 .do-health-overview__chip i {
     color: var(--do-health-text-muted);
 }
 
-.do-health-overview__cta {
+/* CTA column */
+.do-health-overview__hero-cta {
     display: flex;
     flex-direction: column;
+    justify-content: center;
     gap: 6px;
 }
 
 .do-health-overview__btn {
-    border: 1px solid var(--do-health-border);
-    background: #0f172a;
-    color: #fff;
-    padding: 8px 12px;
     border-radius: 10px;
+    border: 1px solid var(--do-health-border);
+    padding: 8px 12px;
     cursor: pointer;
     font-weight: 600;
-    transition: background 0.2s ease;
+    font-size: 12px;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+    white-space: nowrap;
+}
+
+.do-health-overview__btn.primary {
+    background: #0f172a;
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.38);
+}
+
+.do-health-overview__btn.primary:hover {
+    background: #020617;
 }
 
 .do-health-overview__btn.ghost {
-    background: #fff;
+    background: #ffffff;
     color: var(--do-health-text);
-}
-
-.do-health-overview__btn:hover {
-    background: #111827;
 }
 
 .do-health-overview__btn.ghost:hover {
     background: #e2e8f0;
 }
 
-.do-health-overview__cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+.do-health-overview__grid-main,
+.do-health-overview__grid-side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px
+}
+
+.do-health-overview__card-stack {
+    display: flex;
+    flex-direction: column;
     gap: 10px;
 }
 
+/* Generic card */
 .do-health-overview__card {
     border: 1px solid var(--do-health-border);
     border-radius: 16px;
-    padding: 12px;
-    background: #fff;
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+    background: #ffffff;
+    padding: 12px 14px;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
 }
 
 .do-health-overview__card--muted {
-    background: var(--do-health-panel-alt);
+    background: #f8fafc;
 }
 
+/* Card header & badge */
 .do-health-overview__card-header {
     display: flex;
     justify-content: space-between;
@@ -1095,14 +1162,9 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 }
 
 .do-health-overview__card-title {
-    font-weight: 800;
-    color: var(--do-health-text);
+    font-weight: 700;
     font-size: 14px;
-}
-
-.do-health-overview__row.compact {
-    padding: 2px 0;
-    border-bottom: none;
+    color: var(--do-health-text);
 }
 
 .do-health-overview__card-actions {
@@ -1114,9 +1176,9 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 .do-health-overview__pill {
     display: inline-flex;
     align-items: center;
-    padding: 4px 8px;
+    padding: 3px 8px;
     border-radius: 999px;
-    background: var(--do-health-accent-muted);
+    background: rgba(22, 163, 74, 0.09);
     color: var(--do-health-accent);
     font-size: 11px;
     font-weight: 700;
@@ -1128,8 +1190,10 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     color: var(--do-health-accent);
     cursor: pointer;
     font-weight: 600;
+    font-size: 11px;
 }
 
+/* Rows inside cards */
 .do-health-overview__row {
     display: flex;
     gap: 8px;
@@ -1141,9 +1205,18 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     border-bottom: none;
 }
 
+.do-health-overview__row.compact {
+    padding: 2px 0;
+}
+
 .do-health-overview__row-icon {
-    color: var(--do-health-text-muted);
     width: 18px;
+    color: var(--do-health-text-muted);
+}
+
+.do-health-overview__row-body {
+    flex: 1;
+    min-width: 0;
 }
 
 .do-health-overview__row-label {
@@ -1152,15 +1225,12 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 }
 
 .do-health-overview__row-value {
+    font-size: 12px;
     color: var(--do-health-text);
     font-weight: 600;
 }
 
-.do-health-overview__row-body {
-    flex: 1;
-    min-width: 0;
-}
-
+/* Stats */
 .do-health-overview__stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1178,72 +1248,82 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     color: var(--do-health-text);
 }
 
+/* Vitals grid */
+.do-health-overview__card--vitals {
+    box-shadow: none;
+    border-radius: 16px;
+    background: transparent;
+}
+
 .do-health-overview__pill-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
 }
 
 .do-health-overview__pill-card {
+    border-radius: 14px;
     border: 1px solid var(--do-health-border);
-
-    padding: 14px;
     background: #ffffff;
-    border-radius: 16px;
+    padding: 10px 12px;
     box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
 }
 
 .do-health-overview__pill-card .label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 12px;
     color: var(--do-health-text-muted);
-    display: flex;
-    gap: 8px;
-    align-items: center;
+}
+
+.do-health-overview__pill-card .label i {
+    font-size: 13px;
 }
 
 .do-health-overview__pill-card .value {
     font-size: 18px;
     font-weight: 700;
     color: var(--do-health-text);
+    margin-top: 4px;
 }
 
+/* Empty state */
 .do-health-overview__empty {
     text-align: center;
     color: var(--do-health-text-muted);
-    padding: 12px 0;
+    padding: 10px 0;
+    font-size: 12px;
 }
 
-.do-health-overview__empty.muted {
-    color: var(--do-health-text-muted);
-}
-
+/* Emergency contact buttons */
 .do-health-overview__contact-row {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 8px;
 }
 
 .do-health-overview__contact-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 9px 12px;
-    border-radius: 12px;
-    border: 1px solid var(--do-health-border);
-    background: #0f172a;
-    color: #fff;
+    padding: 7px 10px;
+    border-radius: 10px;
     text-decoration: none;
+    border: 1px solid var(--do-health-border);
+    font-size: 12px;
     font-weight: 600;
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    background: #0f172a;
+    color: #ffffff;
 }
 
 .do-health-overview__contact-btn.ghost {
-    background: #fff;
+    background: #ffffff;
     color: var(--do-health-text);
 }
 
-/* Tabs inside overview */
+/* Tabbed section at bottom */
 .do-health-overview__tabset {
     display: flex;
     flex-direction: column;
@@ -1251,51 +1331,40 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
 }
 
 .do-health-overview__tablist {
-    display: flex;
-    gap: 12px;
-    border-bottom: 1px solid var(--do-health-border);
-    padding: 0 4px 4px;
-    overflow-x: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
 }
 
 .do-health-overview__tab {
-    border: none;
-    background: transparent;
-    color: var(--do-health-text-muted);
-    padding: 8px 0;
-    cursor: pointer;
-    font-weight: 700;
+    border-radius: 999px;
+    border: 1px solid var(--do-health-border);
+    background: #ffffff;
+    padding: 8px 12px;
+    text-align: center;
+    font-weight: 600;
     font-size: 13px;
-    position: relative;
-    min-width: 120px;
-    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+    transition: all 0.2s ease;
 }
 
 .do-health-overview__tab:hover {
-    color: var(--do-health-text);
+    transform: translateY(-1px);
 }
 
 .do-health-overview__tab.active {
-    color: var(--do-health-text);
-}
-
-.do-health-overview__tab.active::after,
-.do-health-overview__tab:hover::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -5px;
-    height: 3px;
-    background: linear-gradient(90deg, #16a34a, #22c55e);
-    border-radius: 999px;
+    background: linear-gradient(120deg, rgba(22, 163, 74, 0.16), rgba(34, 197, 94, 0.26));
+    border-color: rgba(22, 163, 74, 0.4);
+    color: #022c22;
+    box-shadow: 0 12px 26px rgba(22, 163, 74, 0.26);
 }
 
 .do-health-overview__tabbodies {
+    border-radius: 18px;
     border: 1px solid var(--do-health-border);
-    border-radius: 16px;
-    background: #fff;
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+    background: #ffffff;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
     overflow: hidden;
 }
 
@@ -1308,14 +1377,215 @@ body:not(.do-health-sidebar-active) .do-health-sidebar__restore {
     display: block;
 }
 
-@media (max-width: 768px) {
-    .do-health-overview__hero {
-        grid-template-columns: 1fr;
-        text-align: left;
+/* Responsive tweaks */
+@media (max-width: 900px) {
+    .do-health-overview__panel {
+        width: 100%;
+        max-width: 100%;
     }
 
-    .do-health-overview__cta {
+    .do-health-overview__panel-inner {
+        padding: 18px 16px;
+    }
+
+    .do-health-overview__grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .do-health-overview__hero-card {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .do-health-overview__hero-cta {
         flex-direction: row;
+        flex-wrap: wrap;
         justify-content: flex-start;
+    }
+}
+
+.do-health-overview__relations {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-top: 10px;
+}
+
+.do-health-overview__row.relation {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+}
+
+.do-health-overview__row.relation .avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    display: flex;
+    background: rgba(15, 23, 42, 0.08);
+    font-weight: 700;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.do-health-overview__row.relation .avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.do-health-overview__row-actions {
+    display: flex;
+    align-items: center;
+}
+
+.do-health-overview__cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+.do-health-overview__card {
+    padding: 18px 20px;
+    border-radius: 18px;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+    background: #fff;
+}
+
+.do-health-overview__tabs {
+    display: flex;
+    gap: 10px;
+    margin: 14px 0 20px;
+}
+
+.do-health-overview__tab {
+    padding: 8px 16px;
+    background: #fff;
+    border: 1px solid var(--do-health-border);
+    border-radius: 999px;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+}
+
+.do-health-overview__tab.active {
+    background: linear-gradient(180deg, #d1fae5, #a7f3d0);
+    color: #064e3b;
+    border-color: #6ee7b7;
+    font-weight: 600;
+}
+
+.do-health-overview__tabbodies {
+    border-radius: 20px;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+    padding: 20px;
+    background: #fff;
+}
+
+.do-health-overview__hero-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 20px;
+    border-radius: 18px;
+    background: #ffffff;
+    border: 1px solid var(--do-health-border);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+}
+
+.do-health-overview__hero-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.do-health-overview__cta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+/* Slightly larger, circular avatar */
+.do-health-overview__avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 999px;
+}
+
+/* Two-column card grid already exists; just ensure spacing */
+.do-health-overview__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.6fr);
+    gap: 8px;
+}
+
+.do-health-overview__card-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+
+/* Relations card itself uses existing card styles; just tighten inside */
+.do-health-overview__relations {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 6px;
+}
+
+/* Relations row layout */
+.do-health-overview__row.relation {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.do-health-overview__row.relation .avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.06);
+    font-weight: 700;
+    overflow: hidden;
+}
+
+.do-health-overview__row.relation .avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.do-health-overview__row-actions {
+    display: flex;
+    align-items: center;
+}
+
+/* Card + tab body polish */
+.do-health-overview__card {
+    border-radius: 18px;
+    padding: 16px 18px;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+}
+
+.do-health-overview__tabbodies {
+    border-radius: 20px;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
+}
+
+/* Responsive tweaks */
+@media (max-width: 900px) {
+    .do-health-overview__grid {
+        grid-template-columns: minmax(0, 1fr);
     }
 }

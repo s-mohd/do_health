@@ -567,7 +567,7 @@
                 $action.on("click", () => navigateToEncounter(patient))
             }
             else if (item.label == 'Procedure') {
-                // $action.on("click", () => navigateToEncounter(patient))
+                $action.on("click", () => navigateToProcedure(patient))
             }
             else if (item.label == 'Chart') {
                 $action.on("click", () => frappe.set_route("chart"))
@@ -622,8 +622,11 @@
 
             if (!disabled) {
                 const isOverview = (item.route_value || "").toLowerCase() === "patient-overview";
+                const isBilling = (item.label || "").toLowerCase() === "billing";
                 if (isOverview) {
                     $action.on("click", () => openPatientOverviewDrawer(patient));
+                } else if (isBilling) {
+                    $action.on("click", () => openBillingForPatient(patient));
                 } else {
                     $action.on("click", () => navigateToItem(item, patient));
                 }
@@ -634,10 +637,10 @@
             $container.append($action);
         });
 
-        const $interactive = $container
-            .children(".do-health-selected-action")
-            .filter((_, el) => !$(el).hasClass("disabled"));
-        $interactive.first().addClass("active");
+        // const $interactive = $container
+        //     .children(".do-health-selected-action")
+        //     .filter((_, el) => !$(el).hasClass("disabled"));
+        // $interactive.first().addClass("active");
     }
 
     async function openPatientOverviewDrawer(patient) {
@@ -699,6 +702,7 @@
         const encounter = data.last_encounter;
         const vitals = Array.isArray(data.vitals) ? data.vitals : [];
         const counts = data.counts || {};
+        const relations = Array.isArray(data.relations) ? data.relations : [];
 
         const patientName = info.patient_name || patientContext?.patient_name || patientContext?.patient || translate("Patient");
         const gender = info.gender || "";
@@ -725,7 +729,7 @@
             .toUpperCase();
 
         const headerHtml = `
-            <div class="do-health-overview__hero">
+            <div class="do-health-overview__hero-card">
                 <div class="do-health-overview__avatar">
                     ${info.patient_image ? `<img src="${escapeHtml(info.patient_image)}" alt="${escapeHtml(patientName)}" />` : escapeHtml(avatarInitials || "?")}
                 </div>
@@ -740,7 +744,6 @@
                     <button class="do-health-overview__btn" type="button" data-open-patient-record>
                         ${translate("Open Record")}
                     </button>
-                    <button class="do-health-overview__btn ghost" type="button" data-close-overview>${translate("Close")}</button>
                 </div>
             </div>
         `;
@@ -792,16 +795,38 @@
             `
         );
 
+        const relationsCard = buildRelationsCard(relations);
         const vitalsBlock = buildVitalsBlock(vitals);
 
         $content.html(`
             ${headerHtml}
-            <div class="do-health-overview__cards">
-                ${visitCard}
-                ${emergencyCard}
-                ${encounterCard}
-                ${statsCard}
+
+            <div class="do-health-overview__grid">
+                <!-- LEFT COLUMN -->
+                <div class="do-health-overview__grid-main">
+                    <div class="do-health-overview__card-stack">
+                        ${visitCard}
+                    </div>
+                    <div class="do-health-overview__card-stack">
+                        ${statsCard}
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN -->
+                <div class="do-health-overview__grid-side">
+                    <div class="do-health-overview__card-stack">
+                        ${encounterCard}
+                    </div>
+                    <div class="do-health-overview__card-stack">
+                        ${emergencyCard}
+                    </div>
+                </div>
             </div>
+
+            <div class="do-health-overview__relations-row">
+                ${relationsCard}
+            </div>
+
             ${buildTabbedSection([
             { id: "vitals", label: translate("Vitals"), content: vitalsBlock || "" },
             { id: "medical", label: translate("Medical Records"), content: buildComingSoon(translate("Medical records summary coming soon.")) },
@@ -815,6 +840,9 @@
             closePatientOverviewDrawer();
         });
         $content.find("[data-close-overview]").on("click", closePatientOverviewDrawer);
+        $content.find("[data-add-relation]").on("click", () => {
+            openAddRelationDialog(info.name || patientContext?.patient);
+        });
         $content.find("[data-open-appointment]").on("click", () => {
             if (appointment?.name) {
                 frappe.set_route("Form", "Patient Appointment", appointment.name);
@@ -824,6 +852,13 @@
         $content.find("[data-open-encounter]").on("click", () => {
             if (encounter?.name) {
                 frappe.set_route("Form", "Patient Encounter", encounter.name);
+                closePatientOverviewDrawer();
+            }
+        });
+        $content.find("[data-open-related-patient]").on("click", (event) => {
+            const targetPatient = $(event.currentTarget).data("openRelatedPatient");
+            if (targetPatient) {
+                frappe.set_route("Form", "Patient", targetPatient);
                 closePatientOverviewDrawer();
             }
         });
@@ -847,6 +882,157 @@
                     </div>
                 </div>
                 ${body}
+            </div>
+        `;
+    }
+
+    function buildRelationsCard(relations = []) {
+        const body = relations.length
+            ? relations.map(buildRelationRow).join("")
+            : `<div class="do-health-overview__empty">${translate("No related patients recorded yet.")}</div>`;
+
+        return `
+            <div class="do-health-overview__card">
+                <div class="do-health-overview__card-header">
+                    <div class="do-health-overview__card-title">${translate("Family & Relations")}</div>
+                    <div class="do-health-overview__card-actions">
+                        <button class="do-health-overview__link" type="button" data-add-relation>${translate("Add")}</button>
+                    </div>
+                </div>
+                <div class="do-health-overview__card-body do-health-overview__relations">
+                    ${body}
+                </div>
+            </div>
+        `;
+    }
+
+    async function openAddRelationDialog(patientId) {
+        if (!patientId) {
+            frappe.msgprint(translate("Select a patient first."));
+            return;
+        }
+
+        const relationOptions = await fetchRelationOptions();
+        const dialog = new frappe.ui.Dialog({
+            title: translate("Add Relation"),
+            fields: [
+                {
+                    label: translate("Patient"),
+                    fieldname: "patient",
+                    fieldtype: "Link",
+                    options: "Patient",
+                    default: patientId,
+                    read_only: 1
+                },
+                {
+                    label: translate("Related Patient"),
+                    fieldname: "related_patient",
+                    fieldtype: "Link",
+                    options: "Patient",
+                    reqd: 1
+                },
+                {
+                    label: translate("Relation"),
+                    fieldname: "relation",
+                    fieldtype: "Select",
+                    options: ["", ...relationOptions].join("\n"),
+                    reqd: 1
+                },
+                {
+                    label: translate("Notes"),
+                    fieldname: "notes",
+                    fieldtype: "Small Text"
+                }
+            ],
+            primary_action_label: translate("Save"),
+            primary_action: async (values) => {
+                if (!values.related_patient || !values.relation) {
+                    frappe.msgprint(translate("Please select a related patient and relation."));
+                    return;
+                }
+                dialog.disable_primary_action();
+                try {
+                    await frappe.call({
+                        method: "do_health.api.methods.create_patient_relationship",
+                        args: {
+                            patient: patientId,
+                            related_patient: values.related_patient,
+                            relation: values.relation,
+                            notes: values.notes || ""
+                        }
+                    });
+                    dialog.hide();
+                    // refresh overview to show the new relation
+                    loadPatientOverview({ patient: patientId });
+                } catch (error) {
+                    console.warn("[do_health] Failed to add relation", error);
+                } finally {
+                    dialog.enable_primary_action();
+                }
+            }
+        });
+
+        dialog.show();
+    }
+
+    async function fetchRelationOptions() {
+        try {
+            await frappe.model.with_doctype("Patient Relationship");
+            const df = frappe.meta.get_docfield("Patient Relationship", "relation", "Patient Relationship");
+            const options = (df?.options || "")
+                .split("\n")
+                .map((opt) => opt.trim())
+                .filter(Boolean);
+            if (options.length) return options;
+        } catch (error) {
+            console.warn("[do_health] Failed to load relation options", error);
+        }
+
+        return ["Father", "Mother", "Parent", "Husband", "Wife", "Spouse", "Partner", "Child", "Son", "Daughter", "Sibling", "Brother", "Sister", "Guardian", "Ward", "Other"];
+    }
+
+    function buildRelationRow(relation = {}) {
+        if (!relation.patient) return "";
+
+        const avatarInitials = (relation.patient_name || relation.patient || "")
+            .split(" ")
+            .map((word) => word[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase();
+
+        const meta = [];
+        if (relation.relation) meta.push(relation.relation);
+        if (relation.age || relation.age === 0) meta.push(`${relation.age} ${translate("Y")}`);
+        if (relation.gender) meta.push(relation.gender);
+        const metaLabel = meta.join(" • ");
+
+        const identifiers = [];
+        if (relation.file_number) identifiers.push(`${translate("File")}: ${relation.file_number}`);
+        if (relation.cpr) identifiers.push(`CPR: ${relation.cpr}`);
+        const identifierRow = identifiers.length
+            ? `<div class="do-health-overview__muted small">${escapeHtml(identifiers.join(" • "))}</div>`
+            : "";
+
+        const note = relation.description
+            ? `<div class="do-health-overview__muted small">${escapeHtml(relation.description)}</div>`
+            : "";
+
+        return `
+            <div class="do-health-overview__row relation">
+                <span class="do-health-overview__row-icon avatar">
+                    ${relation.patient_image ? `<img src="${escapeHtml(relation.patient_image)}" alt="${escapeHtml(relation.patient_name || relation.patient)}" />` : escapeHtml(avatarInitials || "?")}
+                </span>
+                <div class="do-health-overview__row-body">
+                    <div class="do-health-overview__row-label">${translate("Related Patient")}</div>
+                    <div class="do-health-overview__row-value">${escapeHtml(relation.patient_name || relation.patient)}</div>
+                    ${metaLabel ? `<div class="do-health-overview__muted small">${escapeHtml(metaLabel)}</div>` : ""}
+                    ${identifierRow}
+                    ${note}
+                </div>
+                <div class="do-health-overview__row-actions">
+                    <button class="do-health-overview__link" type="button" data-open-related-patient="${escapeHtml(relation.patient)}">${translate("Open")}</button>
+                </div>
             </div>
         `;
     }
@@ -1141,7 +1327,7 @@
                     const $timeChip = $("<span>", {
                         class: "do-health-chip do-health-chip--time"
                     });
-                    
+
                     if (patient.arrival_time && isValidDate(patient.arrival_time)) {
                         const minutes = formatMinutesSince(patient.arrival_time);
                         $timeChip.html(
@@ -1275,36 +1461,1144 @@
         await openEncounterForPatient(patient);
     }
 
+    async function navigateToProcedure(patient) {
+        await openProcedureForPatient(patient);
+    }
+
     async function openEncounterForPatient(patient) {
         if (!patient) return;
 
-        if (patient.appointment) {
+        const appointmentName = patient.appointment;
+
+        const existingEncounter = await findEncounterForAppointment(appointmentName);
+        if (existingEncounter) {
+            frappe.set_route("Form", "Patient Encounter", existingEncounter);
+            return;
+        }
+
+        const prefilled = await maybeOpenPrefilledFollowUpEncounter(patient);
+        if (prefilled) return;
+
+        frappe.new_doc("Patient Encounter", {
+            appointment: appointmentName
+        });
+    }
+
+    async function openProcedureForPatient(patient) {
+        if (!patient) return;
+
+        const appointmentName = patient.appointment;
+
+        const existingProcedure = await findProcedureForAppointment(appointmentName);
+        if (existingProcedure) {
+            frappe.set_route("Form", "Clinical Procedure", existingProcedure);
+            return;
+        }
+
+        const prefilled = await maybeOpenPrefilledFollowUpProcedure(patient);
+        if (prefilled) return;
+
+        frappe.new_doc("Clinical Procedure", {
+            patient: patient.patient,
+            appointment: appointmentName,
+            practitioner: patient.practitioner,
+            medical_department: patient.medical_department || patient.department
+        });
+    }
+
+    async function findEncounterForAppointment(appointment) {
+        if (!appointment) return null;
+
+        try {
+            const { message } = await frappe.call({
+                method: "frappe.client.get_list",
+                args: {
+                    doctype: "Patient Encounter",
+                    filters: { appointment },
+                    fields: ["name"],
+                    order_by: "creation desc",
+                    limit: 1
+                }
+            });
+
+            return message?.[0]?.name || null;
+        } catch (error) {
+            console.warn("[do_health] Failed to check existing encounter", error);
+            return null;
+        }
+    }
+
+    async function findProcedureForAppointment(appointment) {
+        if (!appointment) return null;
+
+        try {
+            const { message } = await frappe.call({
+                method: "frappe.client.get_list",
+                args: {
+                    doctype: "Clinical Procedure",
+                    filters: { appointment },
+                    fields: ["name"],
+                    order_by: "creation desc",
+                    limit: 1
+                }
+            });
+
+            return message?.[0]?.name || null;
+        } catch (error) {
+            console.warn("[do_health] Failed to check existing clinical procedure", error);
+            return null;
+        }
+    }
+
+    async function maybeOpenPrefilledFollowUpEncounter(patient) {
+        const appointmentName = patient?.appointment;
+        if (!appointmentName) return false;
+
+        const appointmentDetails = await fetchAppointmentDetails(appointmentName);
+        const category = (appointmentDetails?.custom_appointment_category || patient.custom_appointment_category || "").trim();
+        const pastAppointment = appointmentDetails?.custom_past_appointment || patient.custom_past_appointment;
+
+        if (category !== "Follow-up" || !pastAppointment) return false;
+
+        const pastEncounter = await fetchLatestEncounterForAppointment(pastAppointment);
+        if (!pastEncounter) return false;
+
+        const wantsPrefill = await confirmPrefillFromPastEncounter(pastEncounter, pastAppointment);
+        if (!wantsPrefill) return false;
+
+        await openEncounterFromTemplate(pastEncounter, {
+            appointment: appointmentName,
+            patient: patient.patient,
+            practitioner: appointmentDetails?.practitioner || patient.practitioner,
+            practitioner_name: appointmentDetails?.practitioner_name || patient.practitioner_name,
+            appointment_type: appointmentDetails?.appointment_type || patient.appointment_type,
+            medical_department: appointmentDetails?.department || patient.medical_department || patient.department,
+            custom_appointment_category: category
+        });
+
+        return true;
+    }
+
+    async function maybeOpenPrefilledFollowUpProcedure(patient) {
+        const appointmentName = patient?.appointment;
+        if (!appointmentName) return false;
+
+        const appointmentDetails = await fetchAppointmentDetails(appointmentName);
+        const category = (appointmentDetails?.custom_appointment_category || patient.custom_appointment_category || "").trim();
+        const pastAppointment = appointmentDetails?.custom_past_appointment || patient.custom_past_appointment;
+
+        if (category !== "Follow-up" || !pastAppointment) return false;
+
+        const pastProcedure = await fetchLatestProcedureForAppointment(pastAppointment);
+        if (!pastProcedure) return false;
+
+        const wantsPrefill = await confirmPrefillFromPastProcedure(pastProcedure, pastAppointment);
+        if (!wantsPrefill) return false;
+
+        await openProcedureFromTemplate(pastProcedure, {
+            appointment: appointmentName,
+            patient: patient.patient,
+            practitioner: appointmentDetails?.practitioner || patient.practitioner,
+            medical_department: appointmentDetails?.department || patient.medical_department || patient.department
+        });
+
+        return true;
+    }
+
+    async function fetchAppointmentDetails(appointment) {
+        if (!appointment) return null;
+
+        try {
+            const { message } = await frappe.call({
+                method: "frappe.client.get_value",
+                args: {
+                    doctype: "Patient Appointment",
+                    filters: { name: appointment },
+                    fieldname: [
+                        "custom_appointment_category",
+                        "custom_past_appointment",
+                        "appointment_type",
+                        "practitioner",
+                        "practitioner_name",
+                        "department"
+                    ]
+                }
+            });
+            return message || null;
+        } catch (error) {
+            console.warn("[do_health] Failed to fetch appointment details", error);
+            return null;
+        }
+    }
+
+    async function fetchLatestEncounterForAppointment(appointment) {
+        if (!appointment) return null;
+
+        try {
+            const { message } = await frappe.call({
+                method: "frappe.client.get_list",
+                args: {
+                    doctype: "Patient Encounter",
+                    filters: { appointment },
+                    fields: ["name"],
+                    order_by: "creation desc",
+                    limit: 1
+                }
+            });
+
+            const encounterName = message?.[0]?.name;
+            if (!encounterName) return null;
+
+            const { message: encounter } = await frappe.call({
+                method: "frappe.client.get",
+                args: {
+                    doctype: "Patient Encounter",
+                    name: encounterName
+                }
+            });
+
+            return encounter || null;
+        } catch (error) {
+            console.warn("[do_health] Failed to load past encounter", error);
+            return null;
+        }
+    }
+
+    async function fetchLatestProcedureForAppointment(appointment) {
+        if (!appointment) return null;
+
+        try {
+            const { message } = await frappe.call({
+                method: "frappe.client.get_list",
+                args: {
+                    doctype: "Clinical Procedure",
+                    filters: { appointment },
+                    fields: ["name"],
+                    order_by: "creation desc",
+                    limit: 1
+                }
+            });
+
+            const procedureName = message?.[0]?.name;
+            if (!procedureName) return null;
+
+            const { message: procedure } = await frappe.call({
+                method: "frappe.client.get",
+                args: {
+                    doctype: "Clinical Procedure",
+                    name: procedureName
+                }
+            });
+
+            return procedure || null;
+        } catch (error) {
+            console.warn("[do_health] Failed to load past clinical procedure", error);
+            return null;
+        }
+    }
+
+    function confirmPrefillFromPastEncounter(encounter, pastAppointment) {
+        return new Promise((resolve) => {
+            const encounterLabel = encounter?.name ? `#${encounter.name}` : translate("past encounter");
+            const message = translate(
+                "This is a follow-up appointment. Do you want to prefill details from {0}?",
+                [encounterLabel]
+            );
+
+            frappe.confirm(
+                message,
+                () => resolve(true),
+                () => resolve(false)
+            );
+        });
+    }
+
+    function confirmPrefillFromPastProcedure(procedure, pastAppointment) {
+        return new Promise((resolve) => {
+            const procedureLabel = procedure?.name ? `#${procedure.name}` : translate("past clinical procedure");
+            const message = translate(
+                "This is a follow-up appointment. Do you want to prefill details from {0}?",
+                [procedureLabel]
+            );
+
+            frappe.confirm(
+                message,
+                () => resolve(true),
+                () => resolve(false)
+            );
+        });
+    }
+
+    async function openEncounterFromTemplate(template, overrides) {
+        if (!template) return;
+
+        await frappe.model.with_doctype("Patient Encounter");
+
+        const newDoc = frappe.model.copy_doc(template);
+
+        newDoc.patient = overrides?.patient || template.patient;
+        newDoc.appointment = overrides?.appointment || template.appointment;
+        newDoc.appointment_type = overrides?.appointment_type || template.appointment_type;
+        newDoc.practitioner = overrides?.practitioner || template.practitioner;
+        newDoc.practitioner_name = overrides?.practitioner_name || template.practitioner_name;
+        newDoc.medical_department = overrides?.medical_department || template.medical_department;
+        newDoc.custom_appointment_category = overrides?.custom_appointment_category || template.custom_appointment_category;
+        newDoc.encounter_date = frappe.datetime?.get_today ? frappe.datetime.get_today() : newDoc.encounter_date;
+        newDoc.encounter_time = frappe.datetime?.now_time ? frappe.datetime.now_time() : newDoc.encounter_time;
+        newDoc.status = "Open";
+
+        frappe.set_route("Form", newDoc.doctype, newDoc.name);
+    }
+
+    async function openProcedureFromTemplate(template, overrides) {
+        if (!template) return;
+
+        await frappe.model.with_doctype("Clinical Procedure");
+
+        const newDoc = frappe.model.copy_doc(template);
+
+        newDoc.patient = overrides?.patient || template.patient;
+        newDoc.appointment = overrides?.appointment || template.appointment;
+        newDoc.practitioner = overrides?.practitioner || template.practitioner;
+        newDoc.medical_department = overrides?.medical_department || template.medical_department;
+        newDoc.start_date = frappe.datetime?.get_today ? frappe.datetime.get_today() : newDoc.start_date;
+        newDoc.start_time = frappe.datetime?.now_time ? frappe.datetime.now_time() : newDoc.start_time;
+        newDoc.status = "Draft";
+
+        frappe.set_route("Form", newDoc.doctype, newDoc.name);
+    }
+
+    async function openBillingForPatient(patient) {
+        if (!patient?.appointment) {
+            frappe.msgprint(translate("Select a patient with an appointment to open billing."));
+            return;
+        }
+        await openBillingInterface(patient.appointment);
+    }
+
+    async function openBillingInterface(appointmentId) {
+        let appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+        const isInsurance = (appt.custom_payment_type || '').toLowerCase().includes('insur');
+
+        const defaultOverrideRoles = ["Can Override Billing Rate", "System Manager", "Healthcare Practitioner"];
+        const fetchOverrideRoles = async () => {
             try {
                 const { message } = await frappe.call({
-                    method: "frappe.client.get_list",
+                    method: 'frappe.client.get',
                     args: {
-                        doctype: "Patient Encounter",
-                        filters: { appointment: patient.appointment },
-                        fields: ["name"],
-                        limit: 1
+                        doctype: 'Do Health Settings',
+                        name: 'Do Health Settings'
                     }
                 });
+                const rows = message?.billing_override_roles || [];
+                const roles = rows.map(r => r.role).filter(Boolean);
+                return roles.length ? roles : defaultOverrideRoles;
+            } catch (e) {
+                return defaultOverrideRoles;
+            }
+        };
+        const allowedOverrideRoles = await fetchOverrideRoles();
+        const userCanOverride = (frappe.boot?.user?.roles || []).some(r => allowedOverrideRoles.includes(r));
 
-                if (message && message.length) {
-                    frappe.set_route("Form", "Patient Encounter", message[0].name);
-                    return;
+        const dialog = new frappe.ui.Dialog({
+            title: `💳 ${__('Billing')} — ${appt.patient_name}`,
+            size: 'extra-large',
+            primary_action_label: __('Generate Invoices'),
+            primary_action: async () => {
+                try {
+                    const { message: result } = await frappe.call({
+                        method: 'do_health.api.methods.create_invoices_for_appointment',
+                        args: { appointment_id: appt.name, submit_invoice: 0 },
+                        freeze: true,
+                        freeze_message: __('Creating invoice(s)...')
+                    });
+                    const info = result || {};
+                    const alerts = [];
+                    if (info.patient_invoice) {
+                        alerts.push(
+                            info.patient_invoice_updated
+                                ? __('Patient invoice {0} updated.', [info.patient_invoice])
+                                : __('Patient invoice {0} created.', [info.patient_invoice])
+                        );
+                    }
+                    if (info.insurance_invoice) {
+                        alerts.push(
+                            info.insurance_invoice_updated
+                                ? __('Insurance invoice {0} updated.', [info.insurance_invoice])
+                                : __('Insurance invoice {0} created.', [info.insurance_invoice])
+                        );
+                    }
+                    if (!alerts.length) {
+                        alerts.push(__('Billing synchronised.'));
+                    }
+                    frappe.show_alert({ message: alerts.join(' '), indicator: 'green' });
+                    appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+                    await refreshAppointmentItemsUI(appt.name);
+                    await loadPolicySummary(appt.patient, appt.company);
+                    appointmentActions.refreshCalendar();
+                } catch (e) {
+                    console.error(e);
                 }
-            } catch (error) {
-                console.warn("[do_health] Failed to check existing encounter", error);
+            },
+        });
+
+        dialog.$body.html(`
+            <div class="billing-shell" style="display:flex; gap:18px; align-items:flex-start;">
+                <aside class="billing-side" style="width:320px; display:flex; flex-direction:column; gap:16px;">
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <h5 class="font-semibold m-0">${__('Add Item')}</h5>
+                        <div class="mt-3" style="display:flex; gap:8px; align-items:center;">
+                            <div style="flex:1;" id="bill-item-link-wrapper"></div>
+                            <div style="width:110px; margin-top:10px;">
+                                <input type="number" id="bill-item-qty" class="form-control" min="1" step="1" value="1" />
+                            </div>
+                            <div style="margin-top:10px;">
+                                <button class="btn btn-primary" id="bill-add-item">${__('Add')}</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+                        <div>
+                            <label class="form-label text-muted small mb-1">${__('Payment Type')}</label>
+                            <select id="payment-type-select" class="form-control">
+                                <option value="Self Payment">${__('Self Payment')}</option>
+                                <option value="Insurance">${__('Insurance')}</option>
+                            </select>
+                        </div>
+                        <div style="height:1px;background:#f1f5f9;"></div>
+                        <div>
+                            <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                <span class="font-semibold">${__('Insurance Policy')}</span>
+                                <button class="btn btn-sm btn-outline-primary" id="btn-manage-policy">${__('Manage')}</button>
+                            </div>
+                            <div id="policy-summary" class="text-sm text-muted mt-2">${__('Loading...')}</div>
+                        </div>
+                    </section>
+                </aside>
+
+                <section class="billing-main" style="flex:1; display:flex; flex-direction:column; gap:16px;">
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <div class="flex items-center justify-between flex-wrap" style="gap:8px;">
+                            <h5 class="font-semibold m-0">${__('Appointment Items')}</h5>
+                            <span class="badge badge-${isInsurance ? 'info' : 'secondary'}">
+                                ${isInsurance ? __('Insurance') : __('Self Payment')}
+                            </span>
+                        </div>
+                        <div id="bill-items-table" class="table-responsive mt-3"></div>
+                    </section>
+
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
+                            <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Patient Invoice')}</div>
+                                <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                    <span id="patient-invoice-link" class="font-medium"></span>
+                                    <button class="btn btn-sm btn-outline-primary" id="btn-record-payment">${__('Record Payment')}</button>
+                                </div>
+                                <div class="text-sm text-muted mt-2">${__('Outstanding')}: <span id="patient-outstanding">0.00</span></div>
+                            </div>
+                            ${isInsurance ? `
+                            <div class="rounded-lg p-3" id="insurance-claim-card" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Insurance Claim')}</div>
+                                <div class="flex items-center justify-between" style="gap:8px;flex-wrap:wrap;">
+                                    <span id="insurance-claim-summary" class="text-muted">${__('No claim yet')}</span>
+                                    <button class="btn btn-sm btn-warning" disabled id="btn-insurance-claim">${__('Submit Claim')}</button>
+                                </div>
+                            </div>` : ''}
+                        </div>
+                    </section>
+
+                    <section class="billing-card" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                        <div class="info-grid" style="display:grid;grid-template-columns:repeat(${isInsurance ? 2 : 1}, minmax(0,1fr));gap:16px;">
+                            <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Patient Billing Status')}</div>
+                                <div id="patient-status" class="badge badge-secondary">Loading...</div>
+                            </div>
+                            ${isInsurance ? `
+                            <div class="rounded-lg p-3" style="border:1px solid #e5e7eb;">
+                                <div class="text-sm text-muted mb-1">${__('Insurance Claim Status')}</div>
+                                <div id="insurance-status" class="badge badge-info">Loading...</div>
+                            </div>` : ''}
+                        </div>
+                    </section>
+                </section>
+            </div>
+        `);
+
+        dialog.show();
+
+        // --- Auto-select payment type based on active insurance ---
+        try {
+            const { message: activePolicy } = await frappe.call({
+                method: 'do_health.api.methods.get_active_insurance_policy_summary',
+                args: {
+                    patient: appt.patient,
+                    company: appt.company,
+                    on_date: appt.appointment_date || appt.posting_date || frappe.datetime.get_today(),
+                },
+            });
+
+            const ptSelect = document.querySelector('#payment-type-select');
+            if (activePolicy && activePolicy.name) {
+                // If an active policy exists, switch to Insurance automatically
+                ptSelect.value = 'Insurance';
+                await frappe.db.set_value('Patient Appointment', appt.name, 'custom_payment_type', 'Insurance');
+                frappe.show_alert({ message: __('Payment type set to Insurance (active policy detected)'), indicator: 'blue' });
+            } else {
+                // Otherwise default to Self Payment
+                ptSelect.value = 'Self Payment';
+                await frappe.db.set_value('Patient Appointment', appt.name, 'custom_payment_type', 'Self Payment');
+            }
+        } catch (error) {
+            console.warn('Failed to auto-detect insurance policy:', error);
+        }
+
+        const el = dialog.$wrapper.get(0);
+        const qtyInput = el.querySelector('#bill-item-qty');
+        const addBtn = el.querySelector('#bill-add-item');
+
+        await loadPolicySummary(appt.patient, appt.company);
+        await refreshAppointmentItemsUI(appt.name);
+
+        // Link field for item
+        let chosenItemCode = null;
+        const itemParent = $(el).find('#bill-item-link-wrapper');
+        if (!itemParent.length) {
+            console.warn('Billing item wrapper not found');
+            return;
+        }
+        const itemLink = frappe.ui.form.make_control({
+            parent: itemParent,
+            df: {
+                fieldtype: 'Link',
+                fieldname: 'item_code',
+                label: __('Item'),
+                options: 'Item',
+                reqd: 1,
+                change: (val) => { chosenItemCode = val || null; }
+            },
+            render_input: true
+        });
+        itemLink.refresh();
+
+        // Change payment type
+        const ptSelect = el.querySelector('#payment-type-select');
+        ptSelect.value = appt.custom_payment_type || 'Self Payment';
+        ptSelect.addEventListener('change', async () => {
+            await frappe.db.set_value('Patient Appointment', appt.name, 'custom_payment_type', ptSelect.value);
+            appt.custom_payment_type = ptSelect.value;
+            frappe.show_alert({ message: __('Payment type updated'), indicator: 'green' });
+            await refreshAppointmentItemsUI(appt.name);
+        });
+
+        // Add item
+        addBtn.addEventListener('click', async () => {
+            const qty = cint(qtyInput.value || 1);
+            const item_code = itemLink.get_value();
+            if (!item_code) {
+                frappe.show_alert({ message: __('Pick an item first'), indicator: 'orange' });
+                return;
+            }
+            await addAppointmentItem(appt.name, item_code, qty);
+            itemLink.set_value('');
+            chosenItemCode = null;
+            qtyInput.value = '1';
+            await refreshAppointmentItemsUI(appt.name);
+        });
+
+        async function addAppointmentItem(appointment, item_code, qty) {
+            await frappe.call({
+                method: 'do_health.api.methods.add_item_to_appointment',
+                args: { appointment, item_code, qty },
+                freeze: true,
+                freeze_message: __('Adding item...')
+            });
+        }
+
+        async function removeAppointmentItem(rowname) {
+            await frappe.call({
+                method: 'do_health.api.methods.remove_item_from_appointment',
+                args: { rowname },
+                freeze: true,
+                freeze_message: __('Removing item...')
+            });
+        }
+
+        async function updateAppointmentItemQty(rowname, qty) {
+            await frappe.call({
+                method: 'do_health.api.methods.update_item_qty_in_appointment',
+                args: { rowname, qty },
+            });
+        }
+
+        async function updateAppointmentItemOverride(rowname, rate, reason) {
+            await frappe.call({
+                method: 'do_health.api.methods.update_item_override',
+                args: { rowname, rate, reason }
+            });
+        }
+
+        async function loadPolicySummary(patient, company) {
+            const summaryEl = el.querySelector('#policy-summary');
+            const manageBtn = el.querySelector('#btn-manage-policy');
+            summaryEl.textContent = __('Checking policy...');
+
+            try {
+                const { message } = await frappe.call({
+                    method: 'do_health.api.methods.get_active_insurance_policy_summary',
+                    args: {
+                        patient,
+                        company: company || null,
+                        on_date: appt.appointment_date || appt.posting_date || frappe.datetime.get_today()
+                    }
+                });
+                if (message && message.name) {
+                    const expiry = message.policy_expiry_date
+                        ? frappe.datetime.str_to_user(message.policy_expiry_date)
+                        : __('No expiry date');
+                    const plan = message.insurance_plan || __('No plan');
+                    summaryEl.textContent = `${message.insurance_payor || __('Insurance Payor')} • ${plan} (${__('Expires')}: ${expiry})`;
+                    manageBtn.onclick = () => openPolicyManager(message);
+                } else {
+                    summaryEl.textContent = __('No active insurance policy');
+                    manageBtn.onclick = () => openPolicyManager(null);
+                }
+            } catch (err) {
+                console.error(err);
+                summaryEl.textContent = __('Unable to load policy information');
+                manageBtn.onclick = () => openPolicyManager(null);
             }
         }
 
-        frappe.new_doc("Patient Encounter", {
-            // patient: patient.patient,
-            appointment: patient.appointment,
-            // appointment_type: patient.appointment_type,
-            // custom_appointment_category: patient.custom_appointment_category
+        async function openPolicyEditor(policyName = null, opts = {}) {
+            let baseDoc = null;
+            if (policyName) {
+                baseDoc = await frappe.db.get_doc('Patient Insurance Policy', policyName);
+            }
+
+            const isRenew = !!opts.renew;
+            const dialogTitle = policyName
+                ? (isRenew ? __('Renew Insurance Policy') : __('Edit Insurance Policy'))
+                : __('Add Insurance Policy');
+
+            const defaultExpiry = isRenew && baseDoc?.policy_expiry_date
+                ? frappe.datetime.add_months(baseDoc.policy_expiry_date, 12)
+                : (baseDoc?.policy_expiry_date || frappe.datetime.get_today());
+
+            const policyDialog = new frappe.ui.Dialog({
+                title: dialogTitle,
+                fields: [
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'insurance_payor',
+                        label: __('Insurance Payor'),
+                        options: 'Insurance Payor',
+                        reqd: 1,
+                        default: baseDoc?.insurance_payor || ''
+                    },
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'insurance_plan',
+                        label: __('Insurance Plan'),
+                        options: 'Insurance Payor Eligibility Plan',
+                        default: baseDoc?.insurance_plan || ''
+                    },
+                    {
+                        fieldtype: 'Data',
+                        fieldname: 'policy_number',
+                        label: __('Policy Number'),
+                        reqd: 1,
+                        default: baseDoc?.policy_number || ''
+                    },
+                    {
+                        fieldtype: 'Date',
+                        fieldname: 'policy_expiry_date',
+                        label: __('Policy Expiry Date'),
+                        reqd: 1,
+                        default: defaultExpiry
+                    }
+                ],
+                primary_action_label: policyName && !isRenew ? __('Save Changes') : __('Save Policy'),
+                primary_action: async (values) => {
+                    try {
+                        if (policyName && !isRenew) {
+                            await frappe.call({
+                                method: 'do_health.api.methods.update_patient_insurance_policy',
+                                args: {
+                                    policy_name: policyName,
+                                    insurance_payor: values.insurance_payor,
+                                    insurance_plan: values.insurance_plan,
+                                    policy_number: values.policy_number,
+                                    policy_expiry_date: values.policy_expiry_date,
+                                }
+                            });
+                        } else {
+                            await frappe.call({
+                                method: 'do_health.api.methods.create_patient_insurance_policy',
+                                args: {
+                                    patient: appt.patient,
+                                    insurance_payor: values.insurance_payor,
+                                    insurance_plan: values.insurance_plan,
+                                    policy_number: values.policy_number,
+                                    policy_expiry_date: values.policy_expiry_date,
+                                }
+                            });
+                        }
+
+                        frappe.show_alert({ message: __('Insurance policy saved'), indicator: 'green' });
+                        policyDialog.hide();
+                        await loadPolicySummary(appt.patient, appt.company);
+                        if (typeof opts.onSuccess === 'function') {
+                            opts.onSuccess();
+                        }
+                    } catch (error) {
+                        console.error(error);
+                    }
+                }
+            });
+
+            policyDialog.show();
+        }
+
+        async function openPolicyManager(activePolicySummary) {
+            const { message: policies } = await frappe.call({
+                method: 'do_health.api.methods.list_patient_insurance_policies',
+                args: { patient: appt.patient }
+            });
+
+            const manager = new frappe.ui.Dialog({
+                title: __('Manage Insurance Policies'),
+                size: 'large'
+            });
+
+            const rows = (policies || []).map(policy => {
+                const expiryText = policy.policy_expiry_date
+                    ? frappe.datetime.str_to_user(policy.policy_expiry_date)
+                    : __('No expiry date');
+                const diff = policy.policy_expiry_date
+                    ? frappe.datetime.get_diff(policy.policy_expiry_date, frappe.datetime.get_today())
+                    : 1;
+                const isActive = diff >= 0 && policy.docstatus === 1;
+                const statusBadge = isActive
+                    ? `<span class="badge badge-success">${__('Active')}</span>`
+                    : `<span class="badge badge-secondary">${__('Expired')}</span>`;
+
+                return `
+                    <tr data-policy="${policy.name}">
+                        <td>${policy.policy_number || policy.name}</td>
+                        <td>${frappe.utils.escape_html(policy.insurance_payor || '')}</td>
+                        <td>${frappe.utils.escape_html(policy.insurance_plan || __('—'))}</td>
+                        <td>${expiryText}</td>
+                        <td>${statusBadge}</td>
+                        <td class="text-right" style="white-space:nowrap; display:flex; gap:6px; justify-content:flex-end;">
+                            <button class="btn btn-xs btn-secondary js-edit-policy" data-policy="${policy.name}">${__('Edit')}</button>
+                            <button class="btn btn-xs btn-outline-primary js-renew-policy" data-policy="${policy.name}">${__('Renew')}</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            manager.$body.html(`
+                <div>
+                    ${(policies || []).length ? `
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>${__('Policy')}</th>
+                                        <th>${__('Payor')}</th>
+                                        <th>${__('Plan')}</th>
+                                        <th>${__('Expiry')}</th>
+                                        <th>${__('Status')}</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${rows}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : `<div class="text-muted">${__('No insurance policies found for this patient.')}</div>`}
+
+                    <div class="mt-4" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-primary" id="btn-add-policy">${__('Add Policy')}</button>
+                        ${activePolicySummary ? `<span class="text-muted small">${__('Active policy')}: ${frappe.utils.escape_html(activePolicySummary.policy_number || activePolicySummary.name)}</span>` : ''}
+                    </div>
+                </div>
+            `);
+
+            manager.$body.find('#btn-add-policy').on('click', () => {
+                manager.hide();
+                openPolicyEditor(null, { onSuccess: () => openPolicyManager(null) });
+            });
+
+            manager.$body.find('.js-edit-policy').on('click', (e) => {
+                const name = e.currentTarget.getAttribute('data-policy');
+                manager.hide();
+                openPolicyEditor(name, { onSuccess: () => openPolicyManager(null) });
+            });
+
+            manager.$body.find('.js-renew-policy').on('click', (e) => {
+                const name = e.currentTarget.getAttribute('data-policy');
+                manager.hide();
+                openPolicyEditor(name, { renew: true, onSuccess: () => openPolicyManager(null) });
+            });
+
+            manager.show();
+        }
+
+        async function refreshAppointmentItemsUI(appointment) {
+            const { message } = await frappe.call({
+                method: 'do_health.api.methods.get_appointment_items_snapshot',
+                args: { appointment_id: appointment }
+            });
+
+            const tblWrap = el.querySelector('#bill-items-table');
+            if (!tblWrap) {
+                return;
+            }
+            const currency = (message && message.currency) || 'BHD';
+            const isInsurancePayment = (appt.custom_payment_type || '').toLowerCase().includes('insur');
+
+            if (!message || !Array.isArray(message.rows) || !message.rows.length) {
+                tblWrap.innerHTML = `<div class="text-muted small">${__('No items yet.')}</div>`;
+            } else {
+                const header = isInsurancePayment
+                    ? `
+                        <th>${__('Item')}</th>
+                        <th>${__('Qty')}</th>
+                        <th>${__('Rate')}</th>
+                        <th>${__('Override')}</th>
+                        <th>${__('Patient')}</th>
+                        <th>${__('Insurance')}</th>
+                        <th>${__('Total')}</th>
+                        <th></th>`
+                    : `
+                        <th>${__('Item')}</th>
+                        <th>${__('Qty')}</th>
+                        <th>${__('Rate')}</th>
+                        <th>${__('Override')}</th>
+                        <th>${__('Total')}</th>
+                        <th></th>`;
+
+                const bodyRows = message.rows.map(r => {
+                    const qtyInput = `<input type="number" min="1" step="1" class="form-control form-control-sm js-qty" value="${r.qty}">`;
+                    const overrideBadge = r.override_rate ? `<span class="badge badge-warning ml-1">${__('Override')}</span>` : '';
+                    const baseRateNote = r.base_rate && r.override_rate
+                        ? `<div class="text-muted small">${__('Base')}: ${format_currency(r.base_rate || 0, currency)}</div>`
+                        : '';
+                    const overrideMeta = r.override_by
+                        ? `<div class="text-muted small">${__('By')}: ${frappe.utils.escape_html(r.override_by)}</div>`
+                        : '';
+                    const overrideReason = r.override_reason
+                        ? `<div class="text-muted small">${frappe.utils.escape_html(r.override_reason)}</div>`
+                        : '';
+                    const rateLabel = `
+                        <div>${format_currency(r.rate || 0, currency)} ${overrideBadge}</div>
+                        ${baseRateNote}
+                        ${overrideMeta}
+                        ${overrideReason}
+                    `;
+                    const overrideControl = userCanOverride
+                        ? `
+                            <div class="input-group input-group-sm">
+                                <input type="number" min="0" step="0.01" class="form-control form-control-sm js-override" value="${r.override_rate || ''}" placeholder="${format_currency(r.rate || 0, currency)}">
+                                <div class="input-group-append">
+                                    <button class="btn btn-outline-secondary btn-sm js-clear-override" type="button">&times;</button>
+                                </div>
+                            </div>`
+                        : (r.override_rate ? format_currency(r.override_rate, currency) : '—');
+
+                    if (isInsurancePayment) {
+                        return `
+                            <tr data-row="${r.name}">
+                                <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
+                                <td>${qtyInput}</td>
+                                <td>${rateLabel}</td>
+                                <td>${overrideControl}</td>
+                                <td>${format_currency(r.patient_share || 0, currency)}</td>
+                                <td>${format_currency(r.insurance_share || 0, currency)}</td>
+                                <td>${format_currency(r.amount || 0, currency)}</td>
+                                <td class="text-center">
+                                    <button class="btn btn-xs btn-danger js-del">&times;</button>
+                                </td>
+                            </tr>`;
+                    }
+                    return `
+                        <tr data-row="${r.name}">
+                            <td>${frappe.utils.escape_html(r.item_name || r.item_code)}</td>
+                            <td>${qtyInput}</td>
+                            <td>${rateLabel}</td>
+                            <td>${overrideControl}</td>
+                            <td>${format_currency(r.amount || 0, currency)}</td>
+                            <td class="text-center">
+                                <button class="btn btn-xs btn-danger js-del">&times;</button>
+                            </td>
+                        </tr>`;
+                }).join('');
+
+                const totalsRow = isInsurancePayment
+                    ? `
+                        <tr class="table-total" style="background:#f8fafc;">
+                            <td colspan="4" class="text-right font-weight-bold">${__('Totals')}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.patient || 0, currency)}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.insurance || 0, currency)}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.grand || 0, currency)}</td>
+                            <td></td>
+                        </tr>`
+                    : `
+                        <tr class="table-total" style="background:#f8fafc;">
+                            <td colspan="4" class="text-right font-weight-bold">${__('Totals')}</td>
+                            <td class="font-weight-bold">${format_currency(message.totals.grand || 0, currency)}</td>
+                            <td></td>
+                        </tr>`;
+
+                tblWrap.innerHTML = `
+                    <table class="table table-sm table-bordered billing-items-table">
+                        <thead>
+                            <tr>${header}</tr>
+                        </thead>
+                        <tbody>
+                            ${bodyRows}
+                        </tbody>
+                        <tfoot>
+                            ${totalsRow}
+                        </tfoot>
+                    </table>
+                `;
+
+                tblWrap.querySelectorAll('tbody tr[data-row]').forEach(tr => {
+                    const rowname = tr.getAttribute('data-row');
+                    tr.querySelector('.js-del').addEventListener('click', async () => {
+                        await removeAppointmentItem(rowname);
+                        await refreshAppointmentItemsUI(appt.name);
+                    });
+                    tr.querySelector('.js-qty').addEventListener('change', async (e) => {
+                        const q = cint(e.target.value || 1);
+                        await updateAppointmentItemQty(rowname, q);
+                        await refreshAppointmentItemsUI(appt.name);
+                    });
+                    tr.querySelector('.js-override')?.addEventListener('change', async (e) => {
+                        if (!userCanOverride) return;
+                        const val = flt(e.target.value || 0);
+                        if (val <= 0) {
+                            await updateAppointmentItemOverride(rowname, 0, null);
+                            await refreshAppointmentItemsUI(appt.name);
+                            return;
+                        }
+                        frappe.prompt(
+                            [
+                                {
+                                    fieldtype: 'Small Text',
+                                    fieldname: 'reason',
+                                    label: __('Override Reason'),
+                                    reqd: 0
+                                }
+                            ],
+                            async (values) => {
+                                await updateAppointmentItemOverride(rowname, val, values?.reason || '');
+                                await refreshAppointmentItemsUI(appt.name);
+                            },
+                            __('Confirm Override')
+                        );
+                    });
+                    tr.querySelector('.js-clear-override')?.addEventListener('click', async () => {
+                        if (!userCanOverride) return;
+                        const input = tr.querySelector('.js-override');
+                        if (input) input.value = '';
+                        await updateAppointmentItemOverride(rowname, 0, null);
+                        await refreshAppointmentItemsUI(appt.name);
+                    });
+                });
+            }
+
+            const apptDoc = await frappe.db.get_doc('Patient Appointment', appointment);
+            const patientStatusEl = el.querySelector('#patient-status');
+            if (patientStatusEl) {
+                patientStatusEl.textContent = apptDoc.custom_billing_status || __('Not Billed');
+            }
+
+            const insuranceStatusEl = el.querySelector('#insurance-status');
+            if (insuranceStatusEl) {
+                insuranceStatusEl.textContent = isInsurancePayment
+                    ? (apptDoc.custom_insurance_status || __('Not Claimed'))
+                    : __('Not Applicable');
+            }
+
+            const invoiceLinkEl = el.querySelector('#patient-invoice-link');
+            const outstandingEl = el.querySelector('#patient-outstanding');
+            if (apptDoc.ref_sales_invoice) {
+                invoiceLinkEl.innerHTML = `<a href="/app/sales-invoice/${apptDoc.ref_sales_invoice}" target="_blank">${apptDoc.ref_sales_invoice}</a>`;
+                const inv = await frappe.db.get_doc('Sales Invoice', apptDoc.ref_sales_invoice);
+                outstandingEl.textContent = format_currency(inv.outstanding_amount, inv.currency || currency);
+            } else {
+                invoiceLinkEl.textContent = '—';
+                outstandingEl.textContent = format_currency(0, currency);
+            }
+
+            const claimSummaryEl = el.querySelector('#insurance-claim-summary');
+            if (claimSummaryEl) {
+                if (apptDoc.custom_insurance_sales_invoice) {
+                    claimSummaryEl.innerHTML = __(`Linked invoice: <a href="/app/sales-invoice/${apptDoc.custom_insurance_sales_invoice}" target="_blank">
+                    ${apptDoc.custom_insurance_sales_invoice}</a>`);
+                    // claimSummary.innerHTML = `<a href="/app/Sales Invoice/${apptDoc.custom_insurance_sales_invoice}">
+                    // ${apptDoc.custom_insurance_sales_invoice}</a>`;
+                } else {
+                    claimSummaryEl.textContent = __('No claim yet');
+                }
+            }
+        }
+
+        // Record payment button
+        el.querySelector('#btn-record-payment')?.addEventListener('click', async () => {
+            if (!appt.ref_sales_invoice) return;
+            const invoiceDoc = await frappe.db.get_doc('Sales Invoice', appt.ref_sales_invoice);
+
+            const defaultMOP = 'Cash';
+            const outstanding = invoiceDoc.outstanding_amount ?? invoiceDoc.grand_total;
+
+            const paymentDialog = new frappe.ui.Dialog({
+                title: __('Record Payment'),
+                fields: [
+                    {
+                        fieldtype: 'Table',
+                        fieldname: 'payments',
+                        label: __('Payments'),
+                        reqd: 1,
+                        in_place_edit: true,
+                        data: [],
+                        fields: [
+                            {
+                                fieldtype: 'Link',
+                                fieldname: 'mode_of_payment',
+                                options: 'Mode of Payment',
+                                in_list_view: 1,
+                                reqd: 1,
+                                label: __('Mode of Payment'),
+                            },
+                            {
+                                fieldtype: 'Currency',
+                                fieldname: 'amount',
+                                in_list_view: 1,
+                                reqd: 1,
+                                label: __('Amount'),
+                            },
+                            {
+                                fieldtype: 'Data',
+                                fieldname: 'reference_no',
+                                in_list_view: 1,
+                                label: __('Reference No'),
+                            },
+                        ],
+                    },
+                    {
+                        fieldtype: 'Date',
+                        fieldname: 'posting_date',
+                        label: __('Posting Date'),
+                        default: frappe.datetime.now_date(),
+                        reqd: 1,
+                    },
+                    {
+                        fieldtype: 'Check',
+                        fieldname: 'submit_invoice',
+                        label: __('Submit Invoice'),
+                        default: 1,
+                    },
+                ],
+                primary_action_label: __('Submit'),
+                primary_action: async (values) => {
+                    const paymentRows = (values.payments || []).filter(row => row.mode_of_payment && flt(row.amount) > 0);
+                    if (!paymentRows.length) {
+                        frappe.msgprint(__('Please add at least one payment row with an amount.'));
+                        return;
+                    }
+                    await frappe.call({
+                        method: 'do_health.api.methods.record_sales_invoice_payment',
+                        args: {
+                            invoice: invoiceDoc.name,
+                            payments: paymentRows,
+                            posting_date: values.posting_date,
+                            submit_invoice: values.submit_invoice ? 1 : 0,
+                        },
+                        freeze: true,
+                        freeze_message: __('Recording payment...'),
+                    });
+                    frappe.show_alert({ message: __('Payments recorded on invoice {0}.', [invoiceDoc.name]), indicator: 'green' });
+                    paymentDialog.hide();
+                    appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+                    await refreshAppointmentItemsUI(appt.name);
+                },
+            });
+
+            paymentDialog.show();
+
+            const paymentsField = paymentDialog.fields_dict.payments;
+            paymentsField.df.data = [{
+                mode_of_payment: defaultMOP,
+                amount: outstanding,
+                reference_no: '',
+            }];
+            paymentsField.grid.refresh();
         });
+
+        // Insurance Claim button
+        el.querySelector('#btn-insurance-claim')?.addEventListener('click', async () => {
+            const inv = appt.custom_insurance_sales_invoice;
+            if (!inv) {
+                frappe.show_alert({ message: __('No insurance invoice found'), indicator: 'orange' });
+                return;
+            }
+            const { message: claimName } = await frappe.call({
+                method: 'do_health.api.methods.create_or_update_insurance_claim',
+                args: { appointment: appt.name, invoice: inv }
+            });
+            frappe.show_alert({
+                message: claimName
+                    ? __('Insurance claim {0} prepared.', [claimName])
+                    : __('Insurance coverage prepared for claim.'),
+                indicator: 'green'
+            });
+            appt = await frappe.db.get_doc('Patient Appointment', appointmentId);
+            await refreshAppointmentItemsUI(appt.name);
+        });
+
+        // Auto-refresh billing summary every 60s
+        setInterval(async () => {
+            await refreshAppointmentItemsUI(appt.name);
+        }, 60000);
+
+        // Inside refreshAppointmentItemsUI
+        const patientStatusEl = el.querySelector('#patient-status');
+        if (patientStatusEl) {
+            const status = appt.custom_billing_status || __('Not Billed');
+            patientStatusEl.textContent = status;
+            const map = {
+                'Paid': 'success',
+                'Partially Paid': 'warning',
+                'Not Paid': 'info',
+                'Cancelled': 'danger',
+                'Not Billed': 'secondary',
+            };
+            patientStatusEl.className = `badge badge-${map[status] || 'secondary'}`;
+        }
+
+        const insuranceStatusEl = el.querySelector('#insurance-status');
+        if (insuranceStatusEl) {
+            const status = isInsurancePayment ? (appt.custom_insurance_status || __('Not Claimed')) : __('N/A');
+            insuranceStatusEl.textContent = status;
+            const map = {
+                'Claimed': 'info',
+                'Approved': 'success',
+                'Rejected': 'danger',
+                'Paid': 'primary',
+                'Not Claimed': 'secondary',
+            };
+            insuranceStatusEl.className = `badge badge-${map[status] || 'secondary'}`;
+        }
+
+        await loadPolicySummary(appt.patient, appt.company);
+        await refreshAppointmentItemsUI(appt.name);
     }
 
     function activatePatientContext(patient) {
@@ -1336,7 +2630,7 @@
 
     // Auto-update waiting list timestamps using custom format
     function updateWaitingListTimestamps() {
-        $('.waitinglist-timestamp').each(function() {
+        $('.waitinglist-timestamp').each(function () {
             const $timestamp = $(this);
             const arrivalTime = $timestamp.attr('data-timestamp');
             if (arrivalTime && isValidDate(arrivalTime)) {
@@ -1468,19 +2762,19 @@ function registerHealthSidebarRealtime() {
         setTimeout(registerHealthSidebarRealtime, 100);
         return;
     }
-    
+
     if (!frappe.realtime.socket || !frappe.realtime.socket.connected) {
         setTimeout(registerHealthSidebarRealtime, 100);
         return;
     }
-    
-    frappe.realtime.on("do_health_waiting_list_update", function(data) {
+
+    frappe.realtime.on("do_health_waiting_list_update", function (data) {
         if (window.doHealthSidebar && window.doHealthSidebar.refreshWaitingList) {
             window.doHealthSidebar.refreshWaitingList();
         }
     });
-    
-    frappe.realtime.on("patient_appointments_updated", function(data) {
+
+    frappe.realtime.on("patient_appointments_updated", function (data) {
         if (window.doHealthSidebar && window.doHealthSidebar.refreshWaitingList) {
             window.doHealthSidebar.refreshWaitingList();
         }
