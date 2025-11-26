@@ -2289,7 +2289,7 @@ frappe.views.calendar["Patient Appointment"] = {
 
 
 function render_datepicker() {
-    cur_list.$page.find('.custom-actions').addClass('hidden');
+    cur_list.$page.find('.filter-section').addClass('hidden');
     if ($('#monthdatepicker').length == 0) {
         sessionStorage.server_update = 0;
 

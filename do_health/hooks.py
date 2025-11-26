@@ -200,7 +200,7 @@ doc_events = {
         "on_submit": "do_health.api.events.patient_encounter_submit"
     },
     'Clinical Procedure':{
-        "on_update": "do_health.api.events.clinical_procedure_update",
+        "after_insert": "do_health.api.events.clinical_procedure_inserted",
     },
     'Medication Request':{
         "on_update": "do_health.api.events.medication_request_update",
