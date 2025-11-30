@@ -74,7 +74,7 @@ doctype_js = {
 	# "Patient" : "public/js/patient.js",
 	"Patient Appointment" : "public/js/patient_appointment.js",
 	"Patient Encounter" : "public/js/patient_encounter.js",
- 	# "Clinical Procedure" : "public/js/clinical_procedure.js"
+ 	"Clinical Procedure" : "public/js/clinical_procedure.js"
 }
 doctype_list_js = {
 	"Patient Appointment" : "public/js/patient_appointment_list.js"
@@ -171,7 +171,8 @@ doctype_calendar_js = {
 override_doctype_class = {
     "Patient Appointment": "do_health.overrides.patient_appointment.CustomPatientAppointment",
     "Test Patient Appointment": "do_health.overrides.test_patient_appointment.CustomTestPatientAppointment",
-    "Patient Encounter": "do_health.overrides.patient_encounter.CustomPatientEncounter"
+    "Patient Encounter": "do_health.overrides.patient_encounter.CustomPatientEncounter",
+    "Clinical Procedure": "do_health.overrides.clinical_procedure.CustomClinicalProcedure"
 }
 
 boot_session = "do_health.api.boot.boot_session"
@@ -200,7 +201,7 @@ doc_events = {
         "on_submit": "do_health.api.events.patient_encounter_submit"
     },
     'Clinical Procedure':{
-        "after_insert": "do_health.api.events.clinical_procedure_inserted",
+        "on_submit": "do_health.api.events.clinical_procedure_submit",
     },
     'Medication Request':{
         "on_update": "do_health.api.events.medication_request_update",

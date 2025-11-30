@@ -1,0 +1,89 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:{title}-{language}-{version}",
+ "creation": "2024-01-01 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "procedure_template",
+  "is_required",
+  "is_default",
+  "language",
+  "version",
+  "template_html"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "procedure_template",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Clinical Procedure Template",
+   "options": "Clinical Procedure Template"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_required",
+   "fieldtype": "Check",
+   "label": "Required"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "label": "Default for Procedure"
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Data",
+   "label": "Language"
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version"
+  },
+  {
+   "fieldname": "template_html",
+   "fieldtype": "Text Editor",
+   "label": "Template HTML",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-11-30 12:05:21.812401",
+ "modified_by": "Administrator",
+ "module": "Do Health",
+ "name": "Consent Form Template",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

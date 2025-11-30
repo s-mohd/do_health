@@ -88,6 +88,12 @@
         }
     }
 
+    function setSecondaryCollapsed(collapsed) {
+        state.secondaryCollapsed = !!collapsed;
+        saveSecondaryCollapsed(state.secondaryCollapsed);
+        applySecondaryCollapsed(state.secondaryCollapsed);
+    }
+
     function normalizePatient(patient = {}) {
         const patientId = patient.patient || patient.name;
         if (!patientId) return null;
@@ -228,9 +234,7 @@
 
         sidebar.find(SELECTORS.refreshWaiting).on("click", () => fetchWaitingPatients());
         sidebar.find(SELECTORS.secondaryToggle).on("click", () => {
-            state.secondaryCollapsed = !state.secondaryCollapsed;
-            saveSecondaryCollapsed(state.secondaryCollapsed);
-            applySecondaryCollapsed(state.secondaryCollapsed);
+            setSecondaryCollapsed(!state.secondaryCollapsed);
         });
         sidebar.find(SELECTORS.brandBadge).on("click", (event) => {
             event.preventDefault();
@@ -2746,6 +2750,12 @@
         },
         clearSelection() {
             clearPatientContext();
+        },
+        setSecondaryCollapsed(collapsed) {
+            setSecondaryCollapsed(collapsed);
+        },
+        isSecondaryCollapsed() {
+            return !!state.secondaryCollapsed;
         },
         getSelectedPatient() {
             return state.selectedPatient || getSavedPatientContext();

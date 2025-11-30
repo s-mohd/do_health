@@ -65,12 +65,6 @@ def patient_encounter_submit(doc, method=None):
         frappe.db.set_value("Patient Appointment", doc.appointment, "custom_visit_status", "Completed")
     frappe.publish_realtime("patient_encounter_updated", doc)
 
-def clinical_procedure_inserted(doc, method=None):
+def clinical_procedure_submit(doc, method=None):
     if doc.appointment:
-        procedure_template = frappe.get_doc('Clinical Procedure Template', doc.clinical_procedure_template)
-        appointment = frappe.get_doc('Patient Appointment', doc.appointment)
-        appointment.custom_billing_items.append({
-            "item_code": procedure_template.item_code,
-            "quantity": 1,
-        })
-        appointment.save()
+        frappe.db.set_value("Patient Appointment", doc.appointment, "custom_visit_status", "Completed")

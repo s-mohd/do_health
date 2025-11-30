@@ -452,6 +452,7 @@ frappe.views.calendar["Patient Appointment"] = {
         // event click handler
         eventClick: function (info) {
             frappe.views.calendar["Patient Appointment"].hideActivePopovers();
+            applySecondaryCollapsed(false);
             appointmentActions.pinPatientToSidebar(info.event.id, info.event);
         },
 
@@ -2285,8 +2286,16 @@ frappe.views.calendar["Patient Appointment"] = {
 
 // Helper functions
 
-// Load waiting list data once on page load
+function applySecondaryCollapsed(collapsed) {
+    if (window.doHealthSidebar?.setSecondaryCollapsed) {
+        window.doHealthSidebar.setSecondaryCollapsed(collapsed);
+        setTimeout(() => {
+            window.dispatchEvent(new Event('resize'));
+        }, 300);
+    }
+}
 
+// Load waiting list data once on page load
 
 function render_datepicker() {
     cur_list.$page.find('.filter-section').addClass('hidden');
