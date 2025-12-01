@@ -1480,8 +1480,8 @@
             return;
         }
 
-        const prefilled = await maybeOpenPrefilledFollowUpEncounter(patient);
-        if (prefilled) return;
+        // const prefilled = await maybeOpenPrefilledFollowUpEncounter(patient);
+        // if (prefilled) return;
 
         frappe.new_doc("Patient Encounter", {
             appointment: appointmentName
@@ -1499,8 +1499,8 @@
             return;
         }
 
-        const prefilled = await maybeOpenPrefilledFollowUpProcedure(patient);
-        if (prefilled) return;
+        // const prefilled = await maybeOpenPrefilledFollowUpProcedure(patient);
+        // if (prefilled) return;
 
         frappe.new_doc("Clinical Procedure", {
             patient: patient.patient,

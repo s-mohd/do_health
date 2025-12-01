@@ -1226,6 +1226,158 @@ function clearPatientContext() {
 	disableSidebarActions();
 }
 
+async function renderPreviousEncounterSummary(frm) {
+	$(".do-health-prev-encounter").remove();
+
+	const appointment = frm.doc.appointment;
+	if (!appointment) return;
+
+	try {
+		const { message: appt } = await frappe.db.get_value("Patient Appointment", appointment, ["custom_past_appointment"]);
+		const pastAppt = appt?.custom_past_appointment;
+		if (!pastAppt) return;
+
+		const pastEncounters = await frappe.db.get_list("Patient Encounter", {
+			filters: { appointment: pastAppt, docstatus: ["!=", 2] },
+			fields: ["name", "encounter_date", "practitioner_name"],
+			order_by: "creation desc",
+			limit: 1
+		});
+
+		const pastEncounter = pastEncounters?.[0];
+		const encounterName = pastEncounter?.name;
+		if (!encounterName) return;
+
+		const { message: summary } = await frappe.call({
+			method: "do_health.api.methods.get_encounter_summary",
+			args: { encounter: encounterName }
+		});
+		if (!summary) return;
+
+		const symptoms = Array.isArray(summary.symptoms) ? summary.symptoms : [];
+		const diagnoses = Array.isArray(summary.diagnoses) ? summary.diagnoses : [];
+		const diagDiff = Array.isArray(summary.differential_diagnosis) ? summary.differential_diagnosis : [];
+		const notes = summary.notes || {};
+
+		const copySymptoms = async () => {
+			if (!symptoms.length) return;
+			symptoms.forEach(row => frm.add_child("symptoms", { complaint: row.complaint }));
+			await frm.refresh_field("symptoms");
+		};
+
+		const copyDiagnoses = async () => {
+			if (!diagnoses.length) return;
+			diagnoses.forEach(row => frm.add_child("diagnosis", { diagnosis: row.diagnosis }));
+			await frm.refresh_field("diagnosis");
+		};
+
+		const copyDifferential = async () => {
+			if (!diagDiff.length) return;
+			diagDiff.forEach(row => frm.add_child("custom_differential_diagnosis", { diagnosis: row.diagnosis }));
+			await frm.refresh_field("custom_differential_diagnosis");
+		};
+
+		// Populate Past Impression section fields
+		const setTable = (fieldname, key, rows) => {
+			frm.doc[fieldname] = [];
+			rows.forEach(r => frm.add_child(fieldname, { [key]: r[key] }));
+			frm.refresh_field(fieldname);
+			frm.set_df_property(fieldname, "read_only", 1);
+		};
+		const setValue = (fieldname, value) => {
+			frm.set_value(fieldname, value || "");
+			frm.set_df_property(fieldname, "read_only", 1);
+		};
+
+		setTable("custom_past_visit_symptoms", "complaint", symptoms);
+		setTable("custom_past_visit_diagnosis", "diagnosis", diagnoses);
+		setTable("custom_past_visit_differential_diagnosis", "diagnosis", diagDiff);
+		setValue("custom_past_visit_symptoms_notes", notes?.symptoms_notes || notes?.custom_symptoms_notes);
+		setValue("custom_past_visit_diagnosis_note", notes?.diagnosis_note || notes?.custom_diagnosis_note);
+		setValue("custom_past_visit_symptom_duration", notes?.symptom_duration || notes?.custom_symptom_duration);
+
+		// Add inline actions to Past Impression section
+		const $section = $(frm.fields_dict?.custom_past_visit_impressions?.wrapper).closest(".form-section");
+		if ($section.length) {
+			const actions = [
+				{
+					selector: "[data-fieldname='custom_past_visit_symptoms']",
+					title: __("Copy to Symptoms"),
+					handler: copySymptoms
+				},
+				{
+					selector: "[data-fieldname='custom_past_visit_diagnosis']",
+					title: __("Copy to Diagnosis"),
+					handler: copyDiagnoses
+				},
+				{
+					selector: "[data-fieldname='custom_past_visit_differential_diagnosis']",
+					title: __("Copy to Differential"),
+					handler: copyDifferential
+				},
+				{
+					selector: "[data-fieldname='custom_past_visit_symptoms_notes']",
+					title: __("Copy to Symptoms Notes"),
+					handler: () => {
+						if (!notes?.symptoms_notes && !notes?.custom_symptoms_notes) return;
+						frm.set_value("custom_symptoms_notes", notes.symptoms_notes || notes.custom_symptoms_notes || "");
+					}
+				},
+				{
+					selector: "[data-fieldname='custom_past_visit_symptom_duration']",
+					title: __("Copy Duration"),
+					handler: () => {
+						if (!notes?.symptom_duration && !notes?.custom_symptom_duration) return;
+						frm.set_value("custom_symptom_duration", notes.symptom_duration || notes.custom_symptom_duration || "");
+					}
+				},
+				{
+					selector: "[data-fieldname='custom_past_visit_diagnosis_note']",
+					title: __("Copy Diagnosis Note"),
+					handler: () => {
+						if (!notes?.diagnosis_note && !notes?.custom_diagnosis_note && !notes?.encounter_comment) return;
+						frm.set_value("custom_diagnosis_note", notes.diagnosis_note || notes.custom_diagnosis_note || notes.encounter_comment || "");
+					}
+				},
+				{
+					selector: ".section-head",
+					title: __("Open Encounter"),
+					handler: () => frappe.set_route("Form", "Patient Encounter", encounterName),
+					iconOnly: true
+				}
+			];
+
+			actions.forEach(action => {
+				const $input = $section.find(action.selector).closest(".frappe-control");
+				if (!$input.length) return;
+				const $btn = $(`
+					<button class="btn btn-xs btn-default do-health-inline-copy" type="button" style="margin-left:auto; display:flex;">
+						${action.iconOnly ?
+						`<i class="fa-regular fa-arrow-up-right-from-square"></i>` :
+						'<i class="fa-regular fa-clone"></i>'
+					}
+					</button>
+				`).attr("title", action.title).on("click", action.handler);
+
+				const $wrapper = $input.find(".control-value");
+				if ($wrapper.length) {
+					$wrapper.css("display", "flex").css("align-items", "center");
+					if (!$wrapper.find(".do-health-inline-copy[title='" + action.title + "']").length) {
+						$wrapper.append($btn);
+					}
+				} else if (action.iconOnly) {
+					const $head = $section.find(action.selector).first();
+					if ($head.length && !$head.find(".do-health-inline-copy[title='" + action.title + "']").length) {
+						$head.append($btn);
+					}
+				}
+			});
+		}
+	} catch (err) {
+		console.warn("[do_health] Failed to render previous encounter summary", err);
+	}
+}
+
 // --- Patient Info Banner
 function createPatientInfoBanner(patient) {
 	const now = Date.now();
@@ -1663,9 +1815,11 @@ frappe.ui.form.on('Patient Encounter', {
 				$oldBanner.fadeOut(150, function () {
 					$(this).remove();
 					createPatientInfoBanner(patientCtx);
+					renderPreviousEncounterSummary(frm);
 				});
 			} else if (frm.doc.patient) {
 				createPatientInfoBanner(patientCtx);
+				renderPreviousEncounterSummary(frm);
 			}
 
 			// 3️⃣ Rebuild sidebar context if the patient changed
@@ -1686,17 +1840,21 @@ frappe.ui.form.on('Patient Encounter', {
 	},
 	refresh(frm) {
 		$(".do-health-patient-banner").remove();
+		$(".do-health-prev-encounter").remove();
 		$(".encounter-side-panel").remove();
 		$('body').removeClass('encounter-overlay-open');
 		do_health.encounter_sidebar.init(frm);
+		renderPreviousEncounterSummary(frm);
 	},
 	patient(frm) {
 		if (frm.doc.patient) {
 			frm._sidebar_initialized = false;
 			do_health.encounter_sidebar.init(frm);
+			renderPreviousEncounterSummary(frm);
 		}
 		else {
 			$(".do-health-patient-banner").remove();
+			$(".do-health-prev-encounter").remove();
 			$(".encounter-side-panel").remove();
 			$('body').removeClass('encounter-overlay-open');
 		}
